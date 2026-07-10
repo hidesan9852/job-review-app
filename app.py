@@ -86,7 +86,6 @@ with col_left:
     default_persona = """30歳 販売業に携わる女性\n接客の仕事は好きで続けたいが、不規則な勤務シフトでの働き方を脱するためにキャリアチェンジを希望している。"""
     persona_text = st.text_area("ペルソナの詳細", value=default_persona, height=120, disabled=(st.session_state.current_step > 0))
 
-    # 【追加機能】媒体と文字数制限の選択
     st.markdown("<br>### 📢 掲載メディア（文字数制限）", unsafe_allow_html=True)
     target_platform = st.selectbox(
         "改善案を適用するメディアを選択",
@@ -98,9 +97,9 @@ with col_left:
     catch_rule = ""
 
     if target_platform == "Indeed":
-        title_rule = "30文字以内"
+        title_rule = "30文字以内。【重要】Indeedの厳格なガイドラインである「職種名の一意性」を絶対厳守すること。タイトル内にアピール文言（例：未経験歓迎、急募など）や装飾記号（【】や★など）は一切含めず、純粋で一般的な職種名のみを記載すること。"
         catch_rule = "60文字以上〜80文字以内"
-        st.info("📌 タイトル: 30文字以内 / キャッチ: 60〜80文字")
+        st.info("📌 タイトル: 30文字以内（※職種名の一意性を厳守） / キャッチ: 60〜80文字")
     elif target_platform == "AirWork":
         title_rule = "20文字以上〜30文字以内"
         catch_rule = "20文字以上〜30文字以内"
@@ -114,7 +113,16 @@ with col_left:
 
 with col_right:
     st.markdown("### 📄 評価する求人原稿")
-    draft_text = st.text_area("求人原稿を入力", height=350, placeholder="ここに原稿を貼り付けます...", disabled=(st.session_state.current_step > 0))
+    draft_text = st.text_area("求人原稿を入力", height=250, placeholder="ここに原稿を貼り付けます...", disabled=(st.session_state.current_step > 0))
+    
+    # 【追加機能】作成の意図・留意点
+    st.markdown("### 💡 作成の意図・留意点（任意）")
+    draft_intent = st.text_area(
+        "原稿に込めた思い、懸念点、AIに特に見てほしいポイントなど", 
+        height=100, 
+        placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。未経験でも安心できるフォロー体制を強調したい。", 
+        disabled=(st.session_state.current_step > 0)
+    )
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -127,8 +135,11 @@ deep_seconds = math.ceil(char_count / 10)
 deep_mins, deep_secs = divmod(deep_seconds, 60)
 deep_time_str = f"{deep_mins}分{deep_secs}秒" if deep_mins > 0 else f"{deep_secs}秒"
 
-CONTEXT = f"""【ターゲット・ペルソナ】\n{persona_text}\n\n【求人原稿（文字数: 約{char_count}文字）】\n{draft_text}\n\n【物理的な読解時間データ】\n・流し読み想定: {skim_time_str}\n・熟読想定: {deep_time_str}"""
-SYSTEM_PROMPT = "あなたは採用マーケティングの第一人者です。ペルソナの心理に基づき、辛口かつ論理的、建設的に原稿を評価してください。冗長な前置きや挨拶は不要です。即座に本題に入ってください。"
+# 意図が入力されていればプロンプトに結合
+intent_section = f"\n\n【作成の意図・留意点】\n{draft_intent}\n" if draft_intent.strip() else ""
+
+CONTEXT = f"""【ターゲット・ペルソナ】\n{persona_text}\n\n【求人原稿（文字数: 約{char_count}文字）】\n{draft_text}{intent_section}\n\n【物理的な読解時間データ】\n・流し読み想定: {skim_time_str}\n・熟読想定: {deep_time_str}"""
+SYSTEM_PROMPT = "あなたは採用マーケティングの第一人者です。ペルソナの心理に基づき、辛口かつ論理的、建設的に原稿を評価してください。作成者の意図が提示されている場合は、その狙いが効果的に表現されているか、あるいはペルソナの心理とズレていないかも考慮してフィードバックしてください。冗長な前置きや挨拶は不要です。即座に本題に入ってください。"
 
 def call_ai(prompt, step_name):
     """AIを呼び出し、結果を保存して画面に表示する共通関数"""
@@ -164,7 +175,7 @@ if st.session_state.current_step == 0:
         if not draft_text.strip():
             st.warning("⚠️ 評価する求人原稿を入力してください。")
         else:
-            prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の2点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。離脱されないか。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。"""
+            prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の2点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。離脱されないか。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。（※作成の意図が提示されている場合は、その狙いが成功しているかも含めて評価してください）"""
             response = call_ai(prompt1, "STEP 1")
             if response:
                 st.session_state.results[1] = response
@@ -217,9 +228,9 @@ if st.session_state.current_step == 3:
 【適用する厳格なルール（掲載媒体: {target_platform}）】
 ・求人タイトルのルール: {title_rule}
 ・キャッチコピーのルール: {catch_rule}
-※上記の文字数制限は絶対厳守してください。文字数オーバーや不足は致命的なエラーとなります。
+※上記のルールは絶対厳守してください。文字数オーバーや不足、媒体ポリシーの違反は致命的なエラーとなります。
 
-**✨ 具体的な改善コピー提案**: 採点で減点された部分を完全に補い、最後の一押しとなる「具体的な文章案（ルールに沿ったタイトルとキャッチコピー、および追加・修正すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
+**✨ 具体的な改善コピー提案**: 作成者の意図を汲み取りつつ、採点で減点された部分を完全に補い、最後の一押しとなる「具体的な文章案（ルールに沿ったタイトルとキャッチコピー、および追加・修正すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
         response = call_ai(prompt4, "STEP 4")
         if response:
             st.session_state.results[4] = response
