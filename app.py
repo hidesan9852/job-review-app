@@ -45,7 +45,7 @@ html, body, [class*="css"] { font-family: 'Noto Sans JP', 'Inter', sans-serif; }
 st.markdown("""
 <div class="app-header">
     <h1>📝 求人原稿 添削・スコアリングエージェント</h1>
-    <p>設定したペルソナの心理・読解時間をベースに、3段階の深い分析と改善提案を行います</p>
+    <p>設定したペルソナの心理・読解時間をベースに、4段階の深い分析と改善コピーの作成を行います</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -77,9 +77,9 @@ with col_right:
 st.markdown("<br>", unsafe_allow_html=True)
 btn_col, _ = st.columns([1, 2])
 with btn_col:
-    evaluate_btn = st.button("✨ 段階的スコアリングを実行する")
+    evaluate_btn = st.button("✨ 4段階スコアリングを実行する")
 
-# ── 評価処理ロジック（3段階連鎖） ──────────────────────────────────
+# ── 評価処理ロジック（4段階連鎖） ──────────────────────────────────
 if evaluate_btn:
     if not draft_text.strip():
         st.warning("⚠️ 評価する求人原稿を入力してください。")
@@ -130,7 +130,6 @@ if evaluate_btn:
                         full_response_1 += text
                         result_placeholder_1.markdown(f'<div class="result-block">{full_response_1}</div>', unsafe_allow_html=True)
             
-            # AIの回答を記憶に追加
             messages_history.append({"role": "assistant", "content": full_response_1})
             
             # ＝＝＝ 段階2：意思決定フローの採点 ＝＝＝
@@ -157,21 +156,43 @@ if evaluate_btn:
                         full_response_2 += text
                         result_placeholder_2.markdown(f'<div class="result-block">{full_response_2}</div>', unsafe_allow_html=True)
                         
-            # AIの回答を記憶に追加
             messages_history.append({"role": "assistant", "content": full_response_2})
             
-            # ＝＝＝ 段階3：総合評価と具体的な改善提案 ＝＝＝
-            st.markdown("### 🏆 STEP 3. 総合評価と【改善コピー提案】")
+            # ＝＝＝ 段階3：総合評価 ＝＝＝
+            st.markdown("### 🏆 STEP 3. 総合評価とCV期待度")
             result_placeholder_3 = st.empty()
             full_response_3 = ""
             
-            prompt3 = """ありがとうございます。最後に、これまでの分析を総括し、以下の2点を出力してください。
-1. **🏆 総合評価**: 目標である「ペルソナ層からの応募 月5件以上」を見込めるか、総合的な「CV期待度スコア（100点満点）」を提示し、結論を述べてください。
-2. **✨ 具体的な改善コピー提案（そのまま使える修正案）**: 採点で減点された部分を補い、最後の一押しとなる「具体的な文章案（キャッチコピーや、追加すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。抽象的なアドバイスではなく、プロのコピーライターとして実際に原稿を書いてください。"""
+            prompt3 = """ありがとうございます。次に、これまでの分析を総括し、以下の項目を出力してください。
+**🏆 総合評価**: 目標である「ペルソナ層からの応募 月5件以上」を見込めるか、総合的な「CV期待度スコア（100点満点）」を提示し、現状の課題に関する結論を論理的に述べてください。
+※具体的な改善コピーの作成は次のステップで行うので、ここでは課題の総括にとどめてください。"""
             
             messages_history.append({"role": "user", "content": prompt3})
             
-            with st.spinner("STEP 3: 総合評価と具体的な改善案を生成中..."):
+            with st.spinner("STEP 3: 総合評価を算出中..."):
+                with client.messages.stream(
+                    model="claude-sonnet-4-6",
+                    max_tokens=1500,
+                    system=SYSTEM_PROMPT,
+                    messages=messages_history,
+                ) as stream:
+                    for text in stream.text_stream:
+                        full_response_3 += text
+                        result_placeholder_3.markdown(f'<div class="result-block">{full_response_3}</div>', unsafe_allow_html=True)
+
+            messages_history.append({"role": "assistant", "content": full_response_3})
+
+            # ＝＝＝ 段階4：具体的な改善コピー提案 ＝＝＝
+            st.markdown("### ✨ STEP 4. 具体的な改善コピー提案（そのまま使える修正案）")
+            result_placeholder_4 = st.empty()
+            full_response_4 = ""
+            
+            prompt4 = """最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
+**✨ 具体的な改善コピー提案**: 採点で減点された部分を完全に補い、最後の一押しとなる「具体的な文章案（キャッチコピーや、追加・修正すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
+            
+            messages_history.append({"role": "user", "content": prompt4})
+            
+            with st.spinner("STEP 4: 具体的な改善コピーを生成中..."):
                 with client.messages.stream(
                     model="claude-sonnet-4-6",
                     max_tokens=2500,
@@ -179,8 +200,8 @@ if evaluate_btn:
                     messages=messages_history,
                 ) as stream:
                     for text in stream.text_stream:
-                        full_response_3 += text
-                        result_placeholder_3.markdown(f'<div class="result-block">{full_response_3}</div>', unsafe_allow_html=True)
+                        full_response_4 += text
+                        result_placeholder_4.markdown(f'<div class="result-block">{full_response_4}</div>', unsafe_allow_html=True)
 
             st.success("✅ 全ての分析と改善提案が完了しました！")
             
