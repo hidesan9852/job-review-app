@@ -38,14 +38,25 @@ html, body, [class*="css"] { font-family: 'Noto Sans JP', 'Inter', sans-serif; }
     padding: 0.8rem 2rem !important; width: 100% !important; transition: opacity 0.2s !important;
 }
 .stButton > button:hover { opacity: 0.88 !important; }
+.reset-btn > button {
+    background: #64748b !important; font-size: 0.9rem !important; padding: 0.5rem 1rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
+
+# ── セッション状態の初期化（記憶機能） ─────────────────────────
+if "current_step" not in st.session_state:
+    st.session_state.current_step = 0
+if "ai_messages" not in st.session_state:
+    st.session_state.ai_messages = []
+if "results" not in st.session_state:
+    st.session_state.results = {}
 
 # ── ヘッダー ────────────────────────────────────────────────────
 st.markdown("""
 <div class="app-header">
     <h1>📝 求人原稿 添削・スコアリングエージェント</h1>
-    <p>設定したペルソナの心理・読解時間をベースに、4段階の深い分析と改善コピーの作成を行います</p>
+    <p>AIの処理限界を防ぐため、1ステップずつ着実に分析と改善を行います</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -58,156 +69,132 @@ if not api_key:
         st.error("⚠️ Anthropic APIキーが設定されていません。右上のSettings > Secretsから登録してください。")
         st.stop()
 
+# ── リセットボタン ──────────────────────────────────────────────
+st.markdown('<div class="reset-btn">', unsafe_allow_html=True)
+if st.button("🔄 別の原稿を評価する（システムをリセット）"):
+    st.session_state.current_step = 0
+    st.session_state.ai_messages = []
+    st.session_state.results = {}
+    st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
+
 # ── 入力フォーム ────────────────────────────────────────────────
 col_left, col_right = st.columns([1, 1.5], gap="large")
 
 with col_left:
     st.markdown("### 🎯 ターゲット・ペルソナ設定")
-    st.write("※必要に応じて内容を書き換えてください。")
     default_persona = """30歳 販売業に携わる女性
 接客の仕事は好きで続けたいが、不規則な勤務シフトでの働き方を脱するためにキャリアチェンジを希望している。"""
-    persona_text = st.text_area("ペルソナの詳細", value=default_persona, height=150)
+    persona_text = st.text_area("ペルソナの詳細", value=default_persona, height=150, disabled=(st.session_state.current_step > 0))
 
 with col_right:
     st.markdown("### 📄 評価する求人原稿")
-    st.write("※作成した求人原稿（タイトル＋本文）を貼り付けてください。")
-    draft_text = st.text_area("求人原稿を入力", height=300, placeholder="ここに原稿を貼り付けます...")
+    draft_text = st.text_area("求人原稿を入力", height=300, placeholder="ここに原稿を貼り付けます...", disabled=(st.session_state.current_step > 0))
 
-# ── 評価実行ボタン ───────────────────────────────────────────────
-st.markdown("<br>", unsafe_allow_html=True)
-btn_col, _ = st.columns([1, 2])
-with btn_col:
-    evaluate_btn = st.button("✨ 4段階スコアリングを実行する")
+st.markdown("<hr>", unsafe_allow_html=True)
 
-# ── 評価処理ロジック（4段階連鎖） ──────────────────────────────────
-if evaluate_btn:
-    if not draft_text.strip():
-        st.warning("⚠️ 評価する求人原稿を入力してください。")
-    else:
-        # 1. 物理的な文字数と読解時間の計算
-        char_count = len(draft_text.replace('\n', '').replace(' ', '').replace(' ', ''))
+# ── 物理的な文字数と読解時間の計算 ──
+char_count = len(draft_text.replace('\n', '').replace(' ', '').replace(' ', ''))
+skim_seconds = math.ceil(char_count / 15)
+skim_mins, skim_secs = divmod(skim_seconds, 60)
+skim_time_str = f"{skim_mins}分{skim_secs}秒" if skim_mins > 0 else f"{skim_secs}秒"
+deep_seconds = math.ceil(char_count / 10)
+deep_mins, deep_secs = divmod(deep_seconds, 60)
+deep_time_str = f"{deep_mins}分{deep_secs}秒" if deep_mins > 0 else f"{deep_secs}秒"
+
+CONTEXT = f"""【ターゲット・ペルソナ】\n{persona_text}\n\n【求人原稿（文字数: 約{char_count}文字）】\n{draft_text}\n\n【物理的な読解時間データ】\n・流し読み想定: {skim_time_str}\n・熟読想定: {deep_time_str}"""
+SYSTEM_PROMPT = "あなたは採用マーケティングの第一人者です。ペルソナの心理に基づき、辛口かつ論理的、建設的に原稿を評価してください。冗長な前置きや挨拶は不要です。即座に本題に入ってください。"
+
+def call_ai(prompt, step_name):
+    """AIを呼び出し、結果を保存して画面に表示する共通関数"""
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        st.session_state.ai_messages.append({"role": "user", "content": prompt})
         
-        skim_seconds = math.ceil(char_count / 15)
-        skim_mins, skim_secs = divmod(skim_seconds, 60)
-        skim_time_str = f"{skim_mins}分{skim_secs}秒" if skim_mins > 0 else f"{skim_secs}秒"
+        result_placeholder = st.empty()
+        full_response = ""
         
-        deep_seconds = math.ceil(char_count / 10)
-        deep_mins, deep_secs = divmod(deep_seconds, 60)
-        deep_time_str = f"{deep_mins}分{deep_secs}秒" if deep_mins > 0 else f"{deep_secs}秒"
+        with st.spinner(f"{step_name} を実行中..."):
+            with client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=4096, # 限界まで引き上げました
+                system=SYSTEM_PROMPT,
+                messages=st.session_state.ai_messages,
+            ) as stream:
+                for text in stream.text_stream:
+                    full_response += text
+                    result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
+                    
+        st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
+        return full_response
+    except Exception as e:
+        st.error(f"❌ エラーが発生しました: {e}")
+        return None
 
-        st.info(f"📊 **原稿データ:** 文字数 約 {char_count} 文字 ｜ 📱 **想定読解時間:** 流し読み {skim_time_str} / 熟読 {deep_time_str}")
+# ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+# STEP 1
+# ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+if st.session_state.current_step == 0:
+    if st.button("🚀 STEP 1: 読解コストとBefore/After評価を実行"):
+        if not draft_text.strip():
+            st.warning("⚠️ 評価する求人原稿を入力してください。")
+        else:
+            prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の2点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。離脱されないか。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。"""
+            response = call_ai(prompt1, "STEP 1")
+            if response:
+                st.session_state.results[1] = response
+                st.session_state.current_step = 1
+                st.rerun()
 
-        try:
-            client = anthropic.Anthropic(api_key=api_key)
-            SYSTEM_PROMPT = "あなたは採用マーケティングの第一人者です。ペルソナの心理に基づき、辛口かつ論理的、建設的に原稿を評価してください。冗長な前置きや挨拶は不要です。即座に本題に入ってください。"
-            
-            # AIに渡す共通の前提情報
-            CONTEXT = f"""【ターゲット・ペルソナ】\n{persona_text}\n\n【求人原稿（文字数: 約{char_count}文字）】\n{draft_text}\n\n【物理的な読解時間データ】\n・流し読み想定: {skim_time_str}\n・熟読想定: {deep_time_str}"""
+if st.session_state.current_step >= 1:
+    st.markdown("### 🔍 STEP 1. 読解コストとBefore/After評価")
+    st.markdown(f'<div class="result-block">{st.session_state.results[1]}</div>', unsafe_allow_html=True)
 
-            # 会話の記憶を保存するリスト
-            messages_history = []
-            
-            # ＝＝＝ 段階1：読解コストとBefore/After評価 ＝＝＝
-            st.markdown("### 🔍 STEP 1. 読解コストとBefore/After評価")
-            result_placeholder_1 = st.empty()
-            full_response_1 = ""
-            
-            prompt1 = f"""{CONTEXT}
-上記の前提を踏まえ、まずは以下の2点について見やすいMarkdown形式で分析を出力してください。
-1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。離脱されないか。
-2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。"""
-            
-            messages_history.append({"role": "user", "content": prompt1})
-            
-            with st.spinner("STEP 1: 読解コストと構成を分析中..."):
-                with client.messages.stream(
-                    model="claude-sonnet-4-6",
-                    max_tokens=2000,
-                    system=SYSTEM_PROMPT,
-                    messages=messages_history,
-                ) as stream:
-                    for text in stream.text_stream:
-                        full_response_1 += text
-                        result_placeholder_1.markdown(f'<div class="result-block">{full_response_1}</div>', unsafe_allow_html=True)
-            
-            messages_history.append({"role": "assistant", "content": full_response_1})
-            
-            # ＝＝＝ 段階2：意思決定フローの採点 ＝＝＝
-            st.markdown("### 🧠 STEP 2. 意思決定フローの厳格採点")
-            result_placeholder_2 = st.empty()
-            full_response_2 = ""
-            
-            prompt2 = """見事な分析です。続けて、求人のフローが自然な心理順序に沿っているか、以下の4項目をそれぞれ【10点満点（計40点満点）】でシビアに採点し、理由と改善点を述べてください。
-① 自分事化（これは私のための求人だと思えるか）
-② 適合性の納得（シフトの悩みが解決すると確信できるか）
-③ 将来の魅力（入社後のキャリア像にワクワクするか）
-④ 応募へのハードル（今すぐ応募ボタンを押したくなるか）"""
-            
-            messages_history.append({"role": "user", "content": prompt2})
-            
-            with st.spinner("STEP 2: 心理的な意思決定フローを採点中..."):
-                with client.messages.stream(
-                    model="claude-sonnet-4-6",
-                    max_tokens=2000,
-                    system=SYSTEM_PROMPT,
-                    messages=messages_history,
-                ) as stream:
-                    for text in stream.text_stream:
-                        full_response_2 += text
-                        result_placeholder_2.markdown(f'<div class="result-block">{full_response_2}</div>', unsafe_allow_html=True)
-                        
-            messages_history.append({"role": "assistant", "content": full_response_2})
-            
-            # ＝＝＝ 段階3：総合評価 ＝＝＝
-            st.markdown("### 🏆 STEP 3. 総合評価とCV期待度")
-            result_placeholder_3 = st.empty()
-            full_response_3 = ""
-            
-            prompt3 = """ありがとうございます。次に、これまでの分析を総括し、以下の項目を出力してください。
-**🏆 総合評価**: 目標である「ペルソナ層からの応募 月5件以上」を見込めるか、総合的な「CV期待度スコア（100点満点）」を提示し、現状の課題に関する結論を論理的に述べてください。
-※具体的な改善コピーの作成は次のステップで行うので、ここでは課題の総括にとどめてください。"""
-            
-            messages_history.append({"role": "user", "content": prompt3})
-            
-            with st.spinner("STEP 3: 総合評価を算出中..."):
-                with client.messages.stream(
-                    model="claude-sonnet-4-6",
-                    max_tokens=1500,
-                    system=SYSTEM_PROMPT,
-                    messages=messages_history,
-                ) as stream:
-                    for text in stream.text_stream:
-                        full_response_3 += text
-                        result_placeholder_3.markdown(f'<div class="result-block">{full_response_3}</div>', unsafe_allow_html=True)
+# ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+# STEP 2
+# ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+if st.session_state.current_step == 1:
+    if st.button("🧠 STEP 2: 意思決定フローの採点を実行"):
+        prompt2 = """見事な分析です。続けて、求人のフローが自然な心理順序に沿っているか、以下の4項目をそれぞれ【10点満点（計40点満点）】でシビアに採点し、理由と改善点を述べてください。\n① 自分事化（これは私のための求人だと思えるか）\n② 適合性の納得（シフトの悩みが解決すると確信できるか）\n③ 将来の魅力（入社後のキャリア像にワクワクするか）\n④ 応募へのハードル（今すぐ応募ボタンを押したくなるか）"""
+        response = call_ai(prompt2, "STEP 2")
+        if response:
+            st.session_state.results[2] = response
+            st.session_state.current_step = 2
+            st.rerun()
 
-            messages_history.append({"role": "assistant", "content": full_response_3})
+if st.session_state.current_step >= 2:
+    st.markdown("### 🧠 STEP 2. 意思決定フローの厳格採点")
+    st.markdown(f'<div class="result-block">{st.session_state.results[2]}</div>', unsafe_allow_html=True)
 
-            # ＝＝＝ 段階4：具体的な改善コピー提案 ＝＝＝
-            st.markdown("### ✨ STEP 4. 具体的な改善コピー提案（そのまま使える修正案）")
-            result_placeholder_4 = st.empty()
-            full_response_4 = ""
-            
-            prompt4 = """最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
-**✨ 具体的な改善コピー提案**: 採点で減点された部分を完全に補い、最後の一押しとなる「具体的な文章案（キャッチコピーや、追加・修正すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
-            
-            messages_history.append({"role": "user", "content": prompt4})
-            
-            with st.spinner("STEP 4: 具体的な改善コピーを生成中..."):
-                with client.messages.stream(
-                    model="claude-sonnet-4-6",
-                    max_tokens=2500,
-                    system=SYSTEM_PROMPT,
-                    messages=messages_history,
-                ) as stream:
-                    for text in stream.text_stream:
-                        full_response_4 += text
-                        result_placeholder_4.markdown(f'<div class="result-block">{full_response_4}</div>', unsafe_allow_html=True)
+# ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+# STEP 3
+# ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+if st.session_state.current_step == 2:
+    if st.button("🏆 STEP 3: 総合評価とCV期待度の算出を実行"):
+        prompt3 = """ありがとうございます。次に、これまでの分析を総括し、以下の項目を出力してください。\n**🏆 総合評価**: 目標である「ペルソナ層からの応募 月5件以上」を見込めるか、総合的な「CV期待度スコア（100点満点）」を提示し、現状の課題に関する結論を論理的に述べてください。※具体的な改善コピーの作成は次のステップで行うので、ここでは課題の総括にとどめてください。"""
+        response = call_ai(prompt3, "STEP 3")
+        if response:
+            st.session_state.results[3] = response
+            st.session_state.current_step = 3
+            st.rerun()
 
-            st.success("✅ 全ての分析と改善提案が完了しました！")
-            
-        except Exception as e:
-            st.error(f"❌ 評価中にエラーが発生しました: {e}")
+if st.session_state.current_step >= 3:
+    st.markdown("### 🏆 STEP 3. 総合評価とCV期待度")
+    st.markdown(f'<div class="result-block">{st.session_state.results[3]}</div>', unsafe_allow_html=True)
 
-# ── フッター ────────────────────────────────────────────────────
-st.markdown("<br>", unsafe_allow_html=True)
-st.caption("Powered by Anthropic Claude · 求人原稿スコアリングシステム")
+# ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+# STEP 4
+# ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+if st.session_state.current_step == 3:
+    if st.button("✨ STEP 4: 具体的な改善コピー提案を生成"):
+        prompt4 = """最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。\n**✨ 具体的な改善コピー提案**: 採点で減点された部分を完全に補い、最後の一押しとなる「具体的な文章案（キャッチコピーや、追加・修正すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
+        response = call_ai(prompt4, "STEP 4")
+        if response:
+            st.session_state.results[4] = response
+            st.session_state.current_step = 4
+            st.rerun()
+
+if st.session_state.current_step >= 4:
+    st.markdown("### ✨ STEP 4. 具体的な改善コピー提案（そのまま使える修正案）")
+    st.markdown(f'<div class="result-block">{st.session_state.results[4]}</div>', unsafe_allow_html=True)
+    st.success("✅ 全ての分析と改善提案が完了しました！最初からやり直す場合は、一番上の「別の原稿を評価する」ボタンを押してください。")
