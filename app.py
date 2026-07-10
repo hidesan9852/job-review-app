@@ -86,6 +86,14 @@ with col_left:
     default_persona = """30歳 販売業に携わる女性\n接客の仕事は好きで続けたいが、不規則な勤務シフトでの働き方を脱するためにキャリアチェンジを希望している。"""
     persona_text = st.text_area("ペルソナの詳細", value=default_persona, height=120, disabled=(st.session_state.current_step > 0))
 
+    # 【追加機能】検索キーワード
+    st.markdown("<br>### 🔍 検索キーワード（任意）", unsafe_allow_html=True)
+    target_keywords = st.text_input(
+        "狙いたい検索キーワードを入力", 
+        placeholder="例：事務, 未経験歓迎, 土日祝休み, 残業なし", 
+        disabled=(st.session_state.current_step > 0)
+    )
+
     st.markdown("<br>### 📢 掲載メディア（文字数制限）", unsafe_allow_html=True)
     target_platform = st.selectbox(
         "改善案を適用するメディアを選択",
@@ -113,14 +121,13 @@ with col_left:
 
 with col_right:
     st.markdown("### 📄 評価する求人原稿")
-    draft_text = st.text_area("求人原稿を入力", height=250, placeholder="ここに原稿を貼り付けます...", disabled=(st.session_state.current_step > 0))
+    draft_text = st.text_area("求人原稿を入力", height=220, placeholder="ここに原稿を貼り付けます...", disabled=(st.session_state.current_step > 0))
     
-    # 【追加機能】作成の意図・留意点
     st.markdown("### 💡 作成の意図・留意点（任意）")
     draft_intent = st.text_area(
         "原稿に込めた思い、懸念点、AIに特に見てほしいポイントなど", 
-        height=100, 
-        placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。未経験でも安心できるフォロー体制を強調したい。", 
+        height=90, 
+        placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。", 
         disabled=(st.session_state.current_step > 0)
     )
 
@@ -135,11 +142,12 @@ deep_seconds = math.ceil(char_count / 10)
 deep_mins, deep_secs = divmod(deep_seconds, 60)
 deep_time_str = f"{deep_mins}分{deep_secs}秒" if deep_mins > 0 else f"{deep_secs}秒"
 
-# 意図が入力されていればプロンプトに結合
-intent_section = f"\n\n【作成の意図・留意点】\n{draft_intent}\n" if draft_intent.strip() else ""
+# 意図やキーワードが入力されていればプロンプトに結合
+intent_section = f"\n\n【作成の意図・留意点】\n{draft_intent}" if draft_intent.strip() else ""
+keyword_section = f"\n\n【狙いたい検索キーワード】\n{target_keywords}" if target_keywords.strip() else ""
 
-CONTEXT = f"""【ターゲット・ペルソナ】\n{persona_text}\n\n【求人原稿（文字数: 約{char_count}文字）】\n{draft_text}{intent_section}\n\n【物理的な読解時間データ】\n・流し読み想定: {skim_time_str}\n・熟読想定: {deep_time_str}"""
-SYSTEM_PROMPT = "あなたは採用マーケティングの第一人者です。ペルソナの心理に基づき、辛口かつ論理的、建設的に原稿を評価してください。作成者の意図が提示されている場合は、その狙いが効果的に表現されているか、あるいはペルソナの心理とズレていないかも考慮してフィードバックしてください。冗長な前置きや挨拶は不要です。即座に本題に入ってください。"
+CONTEXT = f"""【ターゲット・ペルソナ】\n{persona_text}\n\n【求人原稿（文字数: 約{char_count}文字）】\n{draft_text}{intent_section}{keyword_section}\n\n【物理的な読解時間データ】\n・流し読み想定: {skim_time_str}\n・熟読想定: {deep_time_str}"""
+SYSTEM_PROMPT = "あなたは採用マーケティングとSEOの第一人者です。ペルソナの心理に基づき、辛口かつ論理的、建設的に原稿を評価してください。作成者の意図が提示されている場合は、その狙いが効果的に表現されているか考慮してください。冗長な前置きや挨拶は不要です。即座に本題に入ってください。"
 
 def call_ai(prompt, step_name):
     """AIを呼び出し、結果を保存して画面に表示する共通関数"""
@@ -171,11 +179,12 @@ def call_ai(prompt, step_name):
 # STEP 1
 # ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 if st.session_state.current_step == 0:
-    if st.button("🚀 STEP 1: 読解コストとBefore/After評価を実行"):
+    if st.button("🚀 STEP 1: 読解コスト・構成・SEOの評価を実行"):
         if not draft_text.strip():
             st.warning("⚠️ 評価する求人原稿を入力してください。")
         else:
-            prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の2点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。離脱されないか。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。（※作成の意図が提示されている場合は、その狙いが成功しているかも含めて評価してください）"""
+            # 【変更】キーワード最適化の評価項目をSTEP1に追加
+            prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の3点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。（※作成の意図があれば、その成功度も評価）\n3. **🔍 検索キーワード（SEO）の最適化**: 「狙いたい検索キーワード」が指定されている場合、原稿内に網羅されているか、不自然な羅列になっていないかを評価してください。（※指定がない場合は省略可）"""
             response = call_ai(prompt1, "STEP 1")
             if response:
                 st.session_state.results[1] = response
@@ -183,7 +192,7 @@ if st.session_state.current_step == 0:
                 st.rerun()
 
 if st.session_state.current_step >= 1:
-    st.markdown("### 🔍 STEP 1. 読解コストとBefore/After評価")
+    st.markdown("### 🔍 STEP 1. 読解コスト・構成・SEOの評価")
     st.markdown(f'<div class="result-block">{st.session_state.results[1]}</div>', unsafe_allow_html=True)
 
 # ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
@@ -223,12 +232,14 @@ if st.session_state.current_step >= 3:
 # ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 if st.session_state.current_step == 3:
     if st.button("✨ STEP 4: 具体的な改善コピー提案を生成"):
+        # 【変更】STEP4のプロンプトで、キーワードと媒体ルールの両立を厳命
         prompt4 = f"""最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
 
 【適用する厳格なルール（掲載媒体: {target_platform}）】
 ・求人タイトルのルール: {title_rule}
 ・キャッチコピーのルール: {catch_rule}
 ※上記のルールは絶対厳守してください。文字数オーバーや不足、媒体ポリシーの違反は致命的なエラーとなります。
+※指定された「検索キーワード」がある場合は、必ず原稿内に盛り込んでください。ただし、媒体ルール（Indeedの職種名の一意性など）に抵触するキーワードはタイトルを避け、「キャッチコピー」や「本文」に自然に配置してください。
 
 **✨ 具体的な改善コピー提案**: 作成者の意図を汲み取りつつ、採点で減点された部分を完全に補い、最後の一押しとなる「具体的な文章案（ルールに沿ったタイトルとキャッチコピー、および追加・修正すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
         response = call_ai(prompt4, "STEP 4")
