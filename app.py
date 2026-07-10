@@ -83,13 +83,38 @@ col_left, col_right = st.columns([1, 1.5], gap="large")
 
 with col_left:
     st.markdown("### 🎯 ターゲット・ペルソナ設定")
-    default_persona = """30歳 販売業に携わる女性
-接客の仕事は好きで続けたいが、不規則な勤務シフトでの働き方を脱するためにキャリアチェンジを希望している。"""
-    persona_text = st.text_area("ペルソナの詳細", value=default_persona, height=150, disabled=(st.session_state.current_step > 0))
+    default_persona = """30歳 販売業に携わる女性\n接客の仕事は好きで続けたいが、不規則な勤務シフトでの働き方を脱するためにキャリアチェンジを希望している。"""
+    persona_text = st.text_area("ペルソナの詳細", value=default_persona, height=120, disabled=(st.session_state.current_step > 0))
+
+    # 【追加機能】媒体と文字数制限の選択
+    st.markdown("<br>### 📢 掲載メディア（文字数制限）", unsafe_allow_html=True)
+    target_platform = st.selectbox(
+        "改善案を適用するメディアを選択",
+        ["Indeed", "AirWork", "その他"],
+        disabled=(st.session_state.current_step > 0)
+    )
+
+    title_rule = ""
+    catch_rule = ""
+
+    if target_platform == "Indeed":
+        title_rule = "30文字以内"
+        catch_rule = "60文字以上〜80文字以内"
+        st.info("📌 タイトル: 30文字以内 / キャッチ: 60〜80文字")
+    elif target_platform == "AirWork":
+        title_rule = "20文字以上〜30文字以内"
+        catch_rule = "20文字以上〜30文字以内"
+        st.info("📌 タイトル: 20〜30文字 / キャッチ: 20〜30文字")
+    else:
+        c1, c2 = st.columns(2)
+        with c1:
+            title_rule = st.text_input("タイトルの文字数条件", value="30文字以内", disabled=(st.session_state.current_step > 0))
+        with c2:
+            catch_rule = st.text_input("キャッチコピーの文字数条件", value="60文字以内", disabled=(st.session_state.current_step > 0))
 
 with col_right:
     st.markdown("### 📄 評価する求人原稿")
-    draft_text = st.text_area("求人原稿を入力", height=300, placeholder="ここに原稿を貼り付けます...", disabled=(st.session_state.current_step > 0))
+    draft_text = st.text_area("求人原稿を入力", height=350, placeholder="ここに原稿を貼り付けます...", disabled=(st.session_state.current_step > 0))
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -117,7 +142,7 @@ def call_ai(prompt, step_name):
         with st.spinner(f"{step_name} を実行中..."):
             with client.messages.stream(
                 model="claude-sonnet-4-6",
-                max_tokens=4096, # 限界まで引き上げました
+                max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 messages=st.session_state.ai_messages,
             ) as stream:
@@ -187,7 +212,14 @@ if st.session_state.current_step >= 3:
 # ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 if st.session_state.current_step == 3:
     if st.button("✨ STEP 4: 具体的な改善コピー提案を生成"):
-        prompt4 = """最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。\n**✨ 具体的な改善コピー提案**: 採点で減点された部分を完全に補い、最後の一押しとなる「具体的な文章案（キャッチコピーや、追加・修正すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
+        prompt4 = f"""最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
+
+【適用する厳格なルール（掲載媒体: {target_platform}）】
+・求人タイトルのルール: {title_rule}
+・キャッチコピーのルール: {catch_rule}
+※上記の文字数制限は絶対厳守してください。文字数オーバーや不足は致命的なエラーとなります。
+
+**✨ 具体的な改善コピー提案**: 採点で減点された部分を完全に補い、最後の一押しとなる「具体的な文章案（ルールに沿ったタイトルとキャッチコピー、および追加・修正すべき本文の段落）」を、そのまま元の原稿にコピペして使えるレベルで実際に作成してください。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
         response = call_ai(prompt4, "STEP 4")
         if response:
             st.session_state.results[4] = response
