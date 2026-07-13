@@ -86,14 +86,16 @@ with col_left:
     default_persona = """30歳 販売業に携わる女性\n接客の仕事は好きで続けたいが、不規則な勤務シフトでの働き方を脱するためにキャリアチェンジを希望している。"""
     persona_text = st.text_area("ペルソナの詳細", value=default_persona, height=120, disabled=(st.session_state.current_step > 0))
 
-    st.markdown("<br>### 🔍 検索キーワード（任意）", unsafe_allow_html=True)
+    st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
+    st.markdown("### 🔍 検索キーワード（任意）")
     target_keywords = st.text_input(
         "狙いたい検索キーワードを入力", 
         placeholder="例：事務, 未経験歓迎, 土日祝休み, 残業なし", 
         disabled=(st.session_state.current_step > 0)
     )
 
-    st.markdown("<br>### 📢 掲載メディア（文字数制限）", unsafe_allow_html=True)
+    st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
+    st.markdown("### 📢 掲載メディア（文字数制限）")
     target_platform = st.selectbox(
         "改善案を適用するメディアを選択",
         ["Indeed", "AirWork", "その他"],
@@ -189,7 +191,7 @@ if st.session_state.current_step == 0:
 
 if st.session_state.current_step >= 1:
     st.markdown("### 🔍 STEP 1. 読解コスト・構成・ゾーニングの評価")
-    st.markdown(f'<div class="result-block">{st.session_state.results[1]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="result-block">{st.session_state.results.get(1, "")}</div>', unsafe_allow_html=True)
 
 # ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 # STEP 2
@@ -210,7 +212,7 @@ if st.session_state.current_step == 1:
 
 if st.session_state.current_step >= 2:
     st.markdown("### 🧠 STEP 2. 意思決定フローの厳格採点")
-    st.markdown(f'<div class="result-block">{st.session_state.results[2]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="result-block">{st.session_state.results.get(2, "")}</div>', unsafe_allow_html=True)
 
 # ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 # STEP 3
@@ -226,7 +228,7 @@ if st.session_state.current_step == 2:
 
 if st.session_state.current_step >= 3:
     st.markdown("### 🏆 STEP 3. 総合評価とCV期待度")
-    st.markdown(f'<div class="result-block">{st.session_state.results[3]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="result-block">{st.session_state.results.get(3, "")}</div>', unsafe_allow_html=True)
 
 # ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 # STEP 4
@@ -256,5 +258,5 @@ if st.session_state.current_step == 3:
 
 if st.session_state.current_step >= 4:
     st.markdown("### ✨ STEP 4. 具体的な改善コピー提案（そのまま使える修正案）")
-    st.markdown(f'<div class="result-block">{st.session_state.results[4]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="result-block">{st.session_state.results.get(4, "")}</div>', unsafe_allow_html=True)
     st.success("✅ 全ての分析と改善提案が完了しました！最初からやり直す場合は、一番上の「別の原稿を評価する」ボタンを押してください。")
