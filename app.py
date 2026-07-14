@@ -143,6 +143,65 @@ default_persona = """30歳 販売業に携わる女性\n接客の仕事は好き
 
 SYSTEM_PROMPT = "あなたは採用マーケティングとSEOの第一人者です。ペルソナの心理に基づき、辛口かつ論理的、建設的に原稿を評価してください。冗長な前置きや挨拶は不要です。即座に本題に入ってください。"
 
+# ── AirWork入力項目の定義 ──────────────────────────────────────
+# 【重要】この順序はAirWorkのUI仕様として固定されているものとして扱う。
+# 求人タイトル・キャッチコピーは特殊処理(文字数上限30・タイトルは雇用形態の自動プレフィックスあり)のため別扱いとし、
+# それ以外の11項目をここに定義する。(キー, ラベル, 文字数上限 or None, テキストエリアの高さ)
+EMPLOYMENT_TYPES = ["正社員", "契約社員", "アルバイト・パート"]
+
+AIRWORK_FIELDS = [
+    ("job_content",      "お仕事について",       4000, 200),
+    ("candidate",        "求める人材",           4000, 200),
+    ("location",         "勤務地",               None, 68),
+    ("salary",           "給与",                 1000, 120),
+    ("work_hours",       "勤務時間",             3800, 180),
+    ("holidays",         "休日休暇",             1000, 100),
+    ("benefits",         "社会保険/福利厚生",    4000, 180),
+    ("workplace",        "職場環境",             128,  80),
+    ("trial_period",     "試用・研修期間",       250,  80),
+    ("application_flow", "応募とその後の流れ",   1000, 120),
+    ("company_info",     "会社情報",             None, 120),
+]
+
+def build_full_airwork_title(af, employment_type):
+    """AirWorkの仕様で自動付与される雇用形態プレフィックスを含む、実際に表示される求人タイトルを組み立てる"""
+    return f"【{employment_type}】{af.get('title', '')}"
+
+def validate_airwork_fields(af, employment_type):
+    """AirWorkの各項目が文字数上限を超えていないかチェックする。超過している項目のリストを返す"""
+    errors = []
+    title_text = af.get("title", "")
+    if len(title_text) > 30:
+        errors.append(f"求人タイトル: {len(title_text)}文字（上限30文字。「【{employment_type}】」の自動付与部分は含みません）")
+    if len(af.get("catch", "")) > 30:
+        errors.append(f"キャッチコピー: {len(af.get('catch', ''))}文字（上限30文字）")
+    for key, label, limit, _ in AIRWORK_FIELDS:
+        if limit and len(af.get(key, "")) > limit:
+            errors.append(f"{label}: {len(af.get(key, ''))}文字（上限{limit}文字）")
+    return errors
+
+def build_airwork_draft_text(af, employment_type):
+    """AirWorkの各入力欄を、AIが読める1つの原稿テキスト(項目名・文字数付き)に組み立てる"""
+    full_title = build_full_airwork_title(af, employment_type)
+    title_text = af.get("title", "")
+    parts = [
+        f"■求人タイトル（実際にはAirWorkの仕様で雇用形態「【{employment_type}】」が自動で先頭に付与された下記の形で表示される。文字数上限30文字はこのプレフィックスを含まない自由入力部分のみに適用/自由入力部分は現在{len(title_text)}文字）\n{full_title}",
+        f"■キャッチコピー（上限30文字/現在{len(af.get('catch', ''))}文字）\n{af.get('catch', '')}",
+    ]
+    for key, label, limit, _ in AIRWORK_FIELDS:
+        val = af.get(key, "")
+        limit_str = f"上限{limit}文字/現在{len(val)}文字" if limit else f"現在{len(val)}文字"
+        parts.append(f"■{label}（{limit_str}）\n{val}")
+    return "\n\n".join(parts)
+
+def get_draft_preview(input_data, max_len=80):
+    """改訂履歴のプレビュー用に、原稿の一部を取り出す(自由記述/AirWork構造化の両対応)"""
+    if input_data.get("airwork_fields"):
+        text = input_data["airwork_fields"].get("job_content", "") or input_data["airwork_fields"].get("title", "")
+    else:
+        text = input_data.get("draft_text", "")
+    return text[:max_len] + "…" if len(text) > max_len else text
+
 # 採点・分析タスクは「創造性」より「再現性」を優先するため、温度を低めに固定する。
 # (0にしても厳密な決定論にはならないが、デフォルト値の1.0と比べて評価のブレは大きく減る)
 EVAL_TEMPERATURE = 0.2
@@ -235,21 +294,61 @@ if st.session_state.current_step == 0:
                     )
 
         with col_right:
-            st.markdown("### 📄 評価する求人原稿")
-            draft_text = st.text_area(
-                "求人原稿を入力",
-                value=st.session_state.input_data.get("draft_text", ""),
-                height=220,
-                placeholder="ここに原稿を貼り付けます...",
-            )
+            if target_platform == "AirWork":
+                st.markdown("### 📄 評価する求人原稿（AirWork入力項目）")
+                st.caption("AirWorkの入力欄の並び・上限文字数に合わせています。項目ごとに入力してください。")
 
-            st.markdown("### 💡 作成の意図・留意点（任意）")
-            draft_intent = st.text_area(
-                "原稿に込めた思い、懸念点、AIに特に見てほしいポイントなど",
-                value=st.session_state.input_data.get("draft_intent", ""),
-                height=90,
-                placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。",
-            )
+                _af = st.session_state.input_data.get("airwork_fields", {})
+                _prev_emp = st.session_state.input_data.get("employment_type", "正社員")
+                _emp_index = EMPLOYMENT_TYPES.index(_prev_emp) if _prev_emp in EMPLOYMENT_TYPES else 0
+
+                employment_type = st.selectbox(
+                    "雇用形態（求人タイトルの先頭に自動で付与されます・変更不可の仕様）",
+                    EMPLOYMENT_TYPES,
+                    index=_emp_index,
+                )
+                st.caption(f"📌 求人タイトルは実際には「【{employment_type}】+ 以下の入力内容」の形で表示されます（この自動付与はAirWork側の仕様であり変更できません）")
+
+                airwork_values = {}
+                airwork_values["title"] = st.text_input(
+                    f"求人タイトル（上限30文字。「【{employment_type}】」の自動付与部分は含みません）",
+                    value=_af.get("title", ""),
+                )
+                airwork_values["catch"] = st.text_input(
+                    "キャッチコピー（上限30文字）",
+                    value=_af.get("catch", ""),
+                )
+                for key, label, limit, height in AIRWORK_FIELDS:
+                    label_with_limit = f"{label}（上限{limit}文字）" if limit else label
+                    airwork_values[key] = st.text_area(
+                        label_with_limit,
+                        value=_af.get(key, ""),
+                        height=height,
+                    )
+
+                st.markdown("### 💡 作成の意図・留意点（任意）")
+                draft_intent = st.text_area(
+                    "原稿に込めた思い、懸念点、AIに特に見てほしいポイントなど",
+                    value=st.session_state.input_data.get("draft_intent", ""),
+                    height=90,
+                    placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。",
+                )
+            else:
+                st.markdown("### 📄 評価する求人原稿")
+                draft_text = st.text_area(
+                    "求人原稿を入力",
+                    value=st.session_state.input_data.get("draft_text", ""),
+                    height=220,
+                    placeholder="ここに原稿を貼り付けます...",
+                )
+
+                st.markdown("### 💡 作成の意図・留意点（任意）")
+                draft_intent = st.text_area(
+                    "原稿に込めた思い、懸念点、AIに特に見てほしいポイントなど",
+                    value=st.session_state.input_data.get("draft_intent", ""),
+                    height=90,
+                    placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。",
+                )
 
         st.markdown("<hr>", unsafe_allow_html=True)
         submitted_step1 = st.form_submit_button(
@@ -257,11 +356,25 @@ if st.session_state.current_step == 0:
         )
 
     if submitted_step1:
-        if not draft_text.strip():
+        if target_platform == "AirWork":
+            validation_errors = validate_airwork_fields(airwork_values, employment_type)
+            combined_draft = build_airwork_draft_text(airwork_values, employment_type)
+            is_empty = not any(v.strip() for v in airwork_values.values())
+        else:
+            validation_errors = []
+            combined_draft = draft_text
+            is_empty = not draft_text.strip()
+
+        if is_empty:
             st.warning("⚠️ 評価する求人原稿を入力してください。")
+        elif validation_errors:
+            st.error(
+                "⚠️ 以下の項目が文字数の上限を超えています。修正のうえ、再度実行してください。\n\n"
+                + "\n".join(f"- {e}" for e in validation_errors)
+            )
         else:
             # ── 物理的な文字数と読解時間の計算 ──
-            char_count = len(draft_text.replace("\n", "").replace(" ", "").replace("　", ""))
+            char_count = len(combined_draft.replace("\n", "").replace(" ", "").replace("　", ""))
             skim_seconds = math.ceil(char_count / 15)
             skim_mins, skim_secs = divmod(skim_seconds, 60)
             skim_time_str = f"{skim_mins}分{skim_secs}秒" if skim_mins > 0 else f"{skim_secs}秒"
@@ -272,21 +385,32 @@ if st.session_state.current_step == 0:
             intent_section = f"\n\n【作成の意図・留意点】\n{draft_intent}" if draft_intent.strip() else ""
             keyword_section = f"\n\n【狙いたい検索キーワード】\n{target_keywords}" if target_keywords.strip() else ""
 
-            CONTEXT = f"""【ターゲット・ペルソナ】\n{persona_text}\n\n【求人原稿（文字数: 約{char_count}文字）】\n{draft_text}{intent_section}{keyword_section}\n\n【物理的な読解時間データ】\n・流し読み想定: {skim_time_str}\n・熟読想定: {deep_time_str}"""
+            CONTEXT = f"""【ターゲット・ペルソナ】\n{persona_text}\n\n【求人原稿（文字数: 約{char_count}文字）】\n{combined_draft}{intent_section}{keyword_section}\n\n【物理的な読解時間データ】\n・流し読み想定: {skim_time_str}\n・熟読想定: {deep_time_str}"""
 
-            prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の3点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。（※作成の意図があれば、その成功度も評価）\n3. **🔍 SEOと感情訴求のゾーニング（サンドイッチ構造）**: 「アルゴリズム（機械）向けの言葉」と「求職者（人）向けの言葉」が混ざっていないかを評価します。「上部（SEO兼フック）」「中部（感情訴求・ストーリー）」「下部（SEO兼事務的条件）」のサンドイッチ構造で明確に棲み分けができているかを分析してください。"""
+            if target_platform == "AirWork":
+                zoning_point = """3. **🔍 SEOと感情訴求のゾーニング**: AirWorkは項目ごとに入力欄が分かれています。「求人タイトル」「キャッチコピー」など検索・クリック獲得に直結する項目に効果的なキーワードが含まれているか、「お仕事について」「求める人材」などの本文で、アルゴリズム向けの機械的な言葉と求職者の心に響く感情的な言葉が適切に使い分けられているかを、項目ごとに具体的に指摘してください。"""
+            else:
+                zoning_point = """3. **🔍 SEOと感情訴求のゾーニング（サンドイッチ構造）**: 「アルゴリズム（機械）向けの言葉」と「求職者（人）向けの言葉」が混ざっていないかを評価します。「上部（SEO兼フック）」「中部（感情訴求・ストーリー）」「下部（SEO兼事務的条件）」のサンドイッチ構造で明確に棲み分けができているかを分析してください。"""
+
+            prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の3点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。（※作成の意図があれば、その成功度も評価）\n{zoning_point}"""
 
             response = call_ai(prompt1, "STEP 1")
             if response:
-                st.session_state.input_data = {
+                new_input_data = {
                     "persona_text": persona_text,
                     "target_keywords": target_keywords,
                     "target_platform": target_platform,
                     "title_rule": title_rule,
                     "catch_rule": catch_rule,
-                    "draft_text": draft_text,
                     "draft_intent": draft_intent,
                 }
+                if target_platform == "AirWork":
+                    new_input_data["employment_type"] = employment_type
+                    new_input_data["airwork_fields"] = airwork_values
+                else:
+                    new_input_data["draft_text"] = draft_text
+
+                st.session_state.input_data = new_input_data
                 st.session_state.results[1] = response
                 st.session_state.current_step = 1
                 save_backup()
@@ -302,8 +426,25 @@ else:
             st.write(f"**検索キーワード**: {_d.get('target_keywords')}")
         st.write("**ペルソナ**")
         st.text(_d.get("persona_text", ""))
-        st.write("**求人原稿**")
-        st.text(_d.get("draft_text", ""))
+
+        if _d.get("target_platform") == "AirWork" and _d.get("airwork_fields"):
+            _af = _d["airwork_fields"]
+            _emp = _d.get("employment_type", "正社員")
+            _full_title = build_full_airwork_title(_af, _emp)
+            _title_text = _af.get("title", "")
+            st.write(f"**求人タイトル**（自由入力部分: {len(_title_text)}/30文字。実際の表示は下記）")
+            st.text(_full_title)
+            st.write(f"**キャッチコピー**（{len(_af.get('catch', ''))}/30文字）")
+            st.text(_af.get("catch", ""))
+            for key, label, limit, _height in AIRWORK_FIELDS:
+                _val = _af.get(key, "")
+                _limit_str = f"{len(_val)}/{limit}文字" if limit else f"{len(_val)}文字"
+                st.write(f"**{label}**（{_limit_str}）")
+                st.text(_val)
+        else:
+            st.write("**求人原稿**")
+            st.text(_d.get("draft_text", ""))
+
         if _d.get("draft_intent"):
             st.write("**作成の意図・留意点**")
             st.text(_d.get("draft_intent"))
@@ -322,8 +463,7 @@ else:
     if st.session_state.history:
         with st.expander(f"📈 改訂履歴（過去{len(st.session_state.history)}版）", expanded=False):
             for i, v in enumerate(st.session_state.history):
-                v_draft = v["input_data"].get("draft_text", "")
-                v_preview = v_draft[:80] + "…" if len(v_draft) > 80 else v_draft
+                v_preview = get_draft_preview(v["input_data"])
                 st.markdown(f"**第{i + 1}版**　`{v_preview}`")
                 for step_no, step_label in [(1, "STEP1 読解コスト・構成"), (2, "STEP2 意思決定フロー採点"), (3, "STEP3 総合評価"), (4, "STEP4 改善コピー")]:
                     if v["results"].get(step_no):
@@ -385,7 +525,37 @@ if st.session_state.current_step == 3:
         target_platform = _d.get("target_platform", "")
         title_rule = _d.get("title_rule", "")
         catch_rule = _d.get("catch_rule", "")
-        prompt4 = f"""最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
+
+        if target_platform == "AirWork":
+            employment_type = _d.get("employment_type", "正社員")
+            field_limit_lines = "\n".join(
+                f"・{label}: 上限{limit}文字" if limit else f"・{label}: 文字数上限なし"
+                for label, limit in [("求人タイトル（自由入力部分。「【" + employment_type + "】」は含めない）", 30), ("キャッチコピー", 30)]
+                + [(l, lim) for _, l, lim, _h in AIRWORK_FIELDS]
+            )
+            prompt4 = f"""最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
+
+【AirWorkの各入力項目と文字数上限】
+{field_limit_lines}
+※求人タイトルは「【{employment_type}】」がAirWork側の仕様で自動的に先頭へ付与されます。あなたが提案するのはその後に続く自由入力部分のみとし、必ず上記の文字数に収めてください。
+
+**✨ 具体的な改善コピー提案**:
+以下13項目それぞれについて、そのまま入力欄にコピペして使えるレベルの改善案を、各項目の文字数上限を厳守して提示してください。作成者の意図を汲み取りつつ、これまでの採点で減点された部分を補ってください。各項目名を見出しとして明記し、Markdown形式で出力してください。
+1. 求人タイトル（自由入力部分のみ）
+2. キャッチコピー
+3. お仕事について
+4. 求める人材
+5. 勤務地
+6. 給与
+7. 勤務時間
+8. 休日休暇
+9. 社会保険/福利厚生
+10. 職場環境
+11. 試用・研修期間
+12. 応募とその後の流れ
+13. 会社情報"""
+        else:
+            prompt4 = f"""最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
 
 【適用する厳格なルール（掲載媒体: {target_platform}）】
 ・求人タイトルのルール: {title_rule}
