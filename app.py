@@ -322,8 +322,8 @@ else:
                 st.markdown(f"**第{i + 1}版**　`{v_preview}`")
                 for step_no, step_label in [(1, "STEP1 読解コスト・構成"), (2, "STEP2 意思決定フロー採点"), (3, "STEP3 総合評価"), (4, "STEP4 改善コピー")]:
                     if v["results"].get(step_no):
-                        with st.expander(f"　└ {step_label}", expanded=False):
-                            st.markdown(f'<div class="result-block">{v["results"][step_no]}</div>', unsafe_allow_html=True)
+                        st.markdown(f"**└ {step_label}**")
+                        st.markdown(f'<div class="result-block" style="padding:1rem 1.2rem; margin-top:0.3rem; margin-bottom:0.8rem;">{v["results"][step_no]}</div>', unsafe_allow_html=True)
                 st.markdown("---")
 
     st.markdown("<hr>", unsafe_allow_html=True)
