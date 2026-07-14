@@ -239,6 +239,23 @@ if st.session_state.current_step == 0:
     if st.session_state.history:
         st.info(f"✏️ 第{len(st.session_state.history) + 1}版を編集中です。前回の内容が反映されています。原稿を修正して再評価してください。")
 
+    # 【重要】掲載メディアの選択は、以下の入力欄の表示形式(AirWork用13項目 or 自由記述)を
+    # その場で切り替える必要があるため、あえてフォームの外に置く。
+    # フォーム内のウィジェットは送信するまで他の表示に反映されない(Streamlitの仕様)ため。
+    st.markdown("### 📢 掲載メディア（文字数制限）")
+    _platform_options = ["Indeed", "AirWork", "その他"]
+    _prev_platform = st.session_state.input_data.get("target_platform", "Indeed")
+    _platform_index = _platform_options.index(_prev_platform) if _prev_platform in _platform_options else 0
+    target_platform = st.selectbox(
+        "改善案を適用するメディアを選択",
+        _platform_options,
+        index=_platform_index,
+    )
+    if target_platform == "Indeed":
+        st.caption("📌 タイトル: 30文字以内（※職種名の一意性を厳守） / キャッチ: 60〜80文字")
+    elif target_platform == "AirWork":
+        st.caption("📌 求人タイトル: 自由入力部分30文字以内（雇用形態の自動付与部分は別途） / キャッチコピー: 30文字以内 / その他11項目は下記フォームで個別に入力")
+
     with st.form("step0_form", border=False):
         col_left, col_right = st.columns([1, 1.5], gap="large")
 
@@ -258,29 +275,18 @@ if st.session_state.current_step == 0:
                 placeholder="例：事務, 未経験歓迎, 土日祝休み, 残業なし",
             )
 
-            st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
-            st.markdown("### 📢 掲載メディア（文字数制限）")
-            _platform_options = ["Indeed", "AirWork", "その他"]
-            _prev_platform = st.session_state.input_data.get("target_platform", "Indeed")
-            _platform_index = _platform_options.index(_prev_platform) if _prev_platform in _platform_options else 0
-            target_platform = st.selectbox(
-                "改善案を適用するメディアを選択",
-                _platform_options,
-                index=_platform_index,
-            )
-
             title_rule = ""
             catch_rule = ""
 
             if target_platform == "Indeed":
                 title_rule = "30文字以内。【重要】Indeedの厳格なガイドラインである「職種名の一意性」を絶対厳守すること。タイトル内にアピール文言（例：未経験歓迎、急募など）や装飾記号（【】や★など）は一切含めず、純粋で一般的な職種名のみを記載すること。"
                 catch_rule = "60文字以上〜80文字以内"
-                st.caption("📌 タイトル: 30文字以内（※職種名の一意性を厳守） / キャッチ: 60〜80文字")
             elif target_platform == "AirWork":
-                title_rule = "20文字以上〜30文字以内"
-                catch_rule = "20文字以上〜30文字以内"
-                st.caption("📌 タイトル: 20〜30文字 / キャッチ: 20〜30文字")
+                title_rule = "自由入力部分30文字以内（雇用形態の自動付与部分は含まない）"
+                catch_rule = "30文字以内"
             else:
+                st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
+                st.markdown("### ✏️ 文字数条件（カスタム）")
                 c1, c2 = st.columns(2)
                 with c1:
                     title_rule = st.text_input(
