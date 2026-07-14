@@ -58,6 +58,7 @@ def save_backup():
                 "results": st.session_state.results,
                 "ai_messages": st.session_state.ai_messages,
                 "input_data": st.session_state.input_data,
+                "history": st.session_state.history,
             }, f, ensure_ascii=False)
     except Exception:
         pass
@@ -78,6 +79,14 @@ def clear_backup():
     except Exception:
         pass
 
+def archive_current_version():
+    """現在の入力内容と分析結果を改訂履歴に保存する(修正サイクルで前バージョンを失わないため)"""
+    if st.session_state.results:
+        st.session_state.history.append({
+            "input_data": dict(st.session_state.input_data),
+            "results": dict(st.session_state.results),
+        })
+
 # ── セッション状態の初期化（記憶機能） ─────────────────────────
 if "current_step" not in st.session_state:
     st.session_state.current_step = 0
@@ -87,6 +96,8 @@ if "results" not in st.session_state:
     st.session_state.results = {}
 if "input_data" not in st.session_state:
     st.session_state.input_data = {}
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 # タイムアウトやSessionInfo不具合でセッションが飛んだ場合、バックアップから自動復元する
 if st.session_state.current_step == 0 and not st.session_state.results:
@@ -96,6 +107,7 @@ if st.session_state.current_step == 0 and not st.session_state.results:
         st.session_state.results = _backup.get("results", {})
         st.session_state.ai_messages = _backup.get("ai_messages", [])
         st.session_state.input_data = _backup.get("input_data", {})
+        st.session_state.history = _backup.get("history", [])
 
 # ── ヘッダー ────────────────────────────────────────────────────
 st.markdown("""
@@ -116,11 +128,12 @@ if not api_key:
 
 # ── リセットボタン ──────────────────────────────────────────────
 st.markdown('<div class="reset-btn">', unsafe_allow_html=True)
-if st.button("🔄 別の原稿を評価する（システムをリセット）"):
+if st.button("🗑️ まったく新しい原稿を評価する（すべてクリア）"):
     st.session_state.current_step = 0
     st.session_state.ai_messages = []
     st.session_state.results = {}
     st.session_state.input_data = {}
+    st.session_state.history = []
     clear_backup()
     st.rerun()
 st.markdown('</div>', unsafe_allow_html=True)
@@ -159,25 +172,37 @@ def call_ai(prompt, step_name):
 # STEP 0(入力) ── フォーム化により、入力途中の全体再実行(ちらつき・SessionInfoエラーの誘因)を防止
 # ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
 if st.session_state.current_step == 0:
+    if st.session_state.history:
+        st.info(f"✏️ 第{len(st.session_state.history) + 1}版を編集中です。前回の内容が反映されています。原稿を修正して再評価してください。")
+
     with st.form("step0_form", border=False):
         col_left, col_right = st.columns([1, 1.5], gap="large")
 
         with col_left:
             st.markdown("### 🎯 ターゲット・ペルソナ設定")
-            persona_text = st.text_area("ペルソナの詳細", value=default_persona, height=120)
+            persona_text = st.text_area(
+                "ペルソナの詳細",
+                value=st.session_state.input_data.get("persona_text", default_persona),
+                height=120,
+            )
 
             st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
             st.markdown("### 🔍 検索キーワード（任意）")
             target_keywords = st.text_input(
                 "狙いたい検索キーワードを入力",
+                value=st.session_state.input_data.get("target_keywords", ""),
                 placeholder="例：事務, 未経験歓迎, 土日祝休み, 残業なし",
             )
 
             st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
             st.markdown("### 📢 掲載メディア（文字数制限）")
+            _platform_options = ["Indeed", "AirWork", "その他"]
+            _prev_platform = st.session_state.input_data.get("target_platform", "Indeed")
+            _platform_index = _platform_options.index(_prev_platform) if _prev_platform in _platform_options else 0
             target_platform = st.selectbox(
                 "改善案を適用するメディアを選択",
-                ["Indeed", "AirWork", "その他"],
+                _platform_options,
+                index=_platform_index,
             )
 
             title_rule = ""
@@ -194,17 +219,29 @@ if st.session_state.current_step == 0:
             else:
                 c1, c2 = st.columns(2)
                 with c1:
-                    title_rule = st.text_input("タイトルの文字数条件", value="30文字以内")
+                    title_rule = st.text_input(
+                        "タイトルの文字数条件",
+                        value=st.session_state.input_data.get("title_rule", "30文字以内"),
+                    )
                 with c2:
-                    catch_rule = st.text_input("キャッチコピーの文字数条件", value="60文字以内")
+                    catch_rule = st.text_input(
+                        "キャッチコピーの文字数条件",
+                        value=st.session_state.input_data.get("catch_rule", "60文字以内"),
+                    )
 
         with col_right:
             st.markdown("### 📄 評価する求人原稿")
-            draft_text = st.text_area("求人原稿を入力", height=220, placeholder="ここに原稿を貼り付けます...")
+            draft_text = st.text_area(
+                "求人原稿を入力",
+                value=st.session_state.input_data.get("draft_text", ""),
+                height=220,
+                placeholder="ここに原稿を貼り付けます...",
+            )
 
             st.markdown("### 💡 作成の意図・留意点（任意）")
             draft_intent = st.text_area(
                 "原稿に込めた思い、懸念点、AIに特に見てほしいポイントなど",
+                value=st.session_state.input_data.get("draft_intent", ""),
                 height=90,
                 placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。",
             )
@@ -250,6 +287,8 @@ if st.session_state.current_step == 0:
                 save_backup()
                 st.rerun()
 else:
+    st.markdown(f"#### 📝 第{len(st.session_state.history) + 1}版を分析中")
+
     # 入力済み内容を読み取り専用で振り返れるようにする
     with st.expander("📋 入力した内容を確認する", expanded=False):
         _d = st.session_state.input_data
@@ -263,6 +302,30 @@ else:
         if _d.get("draft_intent"):
             st.write("**作成の意図・留意点**")
             st.text(_d.get("draft_intent"))
+
+    # ── 改善サイクル用ボタン：原稿を修正して、この結果をもとにもう一度評価する ──
+    if st.button("✏️ 原稿を修正してもう一度評価する", use_container_width=True, type="primary"):
+        archive_current_version()
+        st.session_state.current_step = 0
+        st.session_state.results = {}
+        st.session_state.ai_messages = []
+        save_backup()
+        st.rerun()
+    st.caption("↑ 現在の入力内容を保持したまま原稿を編集し、STEP 1から再評価します（それまでの結果は下の改訂履歴に保存されます）")
+
+    # ── 改訂履歴の表示 ──
+    if st.session_state.history:
+        with st.expander(f"📈 改訂履歴（過去{len(st.session_state.history)}版）", expanded=False):
+            for i, v in enumerate(st.session_state.history):
+                v_draft = v["input_data"].get("draft_text", "")
+                v_preview = v_draft[:80] + "…" if len(v_draft) > 80 else v_draft
+                st.markdown(f"**第{i + 1}版**　`{v_preview}`")
+                for step_no, step_label in [(1, "STEP1 読解コスト・構成"), (2, "STEP2 意思決定フロー採点"), (3, "STEP3 総合評価"), (4, "STEP4 改善コピー")]:
+                    if v["results"].get(step_no):
+                        with st.expander(f"　└ {step_label}", expanded=False):
+                            st.markdown(f'<div class="result-block">{v["results"][step_no]}</div>', unsafe_allow_html=True)
+                st.markdown("---")
+
     st.markdown("<hr>", unsafe_allow_html=True)
 
 if st.session_state.current_step >= 1:
@@ -342,4 +405,4 @@ if st.session_state.current_step == 3:
 if st.session_state.current_step >= 4:
     st.markdown("### ✨ STEP 4. 具体的な改善コピー提案（そのまま使える修正案）")
     st.markdown(f'<div class="result-block">{st.session_state.results.get(4, "")}</div>', unsafe_allow_html=True)
-    st.success("✅ 全ての分析と改善提案が完了しました！最初からやり直す場合は、一番上の「別の原稿を評価する」ボタンを押してください。")
+    st.success("✅ 全ての分析と改善提案が完了しました！この内容で原稿を直してすぐ再評価したい場合は上の「✏️ 原稿を修正してもう一度評価する」を、まったく別の原稿を評価する場合は一番上の「🗑️ まったく新しい原稿を評価する」を押してください。")
