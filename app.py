@@ -143,6 +143,10 @@ default_persona = """30歳 販売業に携わる女性\n接客の仕事は好き
 
 SYSTEM_PROMPT = "あなたは採用マーケティングとSEOの第一人者です。ペルソナの心理に基づき、辛口かつ論理的、建設的に原稿を評価してください。冗長な前置きや挨拶は不要です。即座に本題に入ってください。"
 
+# 採点・分析タスクは「創造性」より「再現性」を優先するため、温度を低めに固定する。
+# (0にしても厳密な決定論にはならないが、デフォルト値の1.0と比べて評価のブレは大きく減る)
+EVAL_TEMPERATURE = 0.2
+
 def call_ai(prompt, step_name):
     try:
         client = anthropic.Anthropic(api_key=api_key)
@@ -155,6 +159,7 @@ def call_ai(prompt, step_name):
             with client.messages.stream(
                 model="claude-sonnet-4-6",
                 max_tokens=4096,
+                temperature=EVAL_TEMPERATURE,
                 system=SYSTEM_PROMPT,
                 messages=st.session_state.ai_messages,
             ) as stream:
