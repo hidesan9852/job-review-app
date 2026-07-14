@@ -195,12 +195,63 @@ def build_airwork_draft_text(af, employment_type):
     return "\n\n".join(parts)
 
 def get_draft_preview(input_data, max_len=80):
-    """改訂履歴のプレビュー用に、原稿の一部を取り出す(自由記述/AirWork構造化の両対応)"""
+    """改訂履歴のプレビュー用に、原稿の一部を取り出す(自由記述/AirWork/Indeed構造化の3対応)"""
     if input_data.get("airwork_fields"):
         text = input_data["airwork_fields"].get("job_content", "") or input_data["airwork_fields"].get("title", "")
+    elif input_data.get("indeed_fields"):
+        text = input_data["indeed_fields"].get("job_content", "") or input_data["indeed_fields"].get("title", "")
     else:
         text = input_data.get("draft_text", "")
     return text[:max_len] + "…" if len(text) > max_len else text
+
+# ── Indeed入力項目の定義 ───────────────────────────────────────
+# 【重要】この順序はIndeedのUI仕様として固定されているものとして扱う。
+# 求人タイトル(上限30文字)・キャッチコピー(上限80文字)は他項目と別扱いとし、
+# それ以外の18項目をここに定義する。(キー, ラベル, 文字数上限 or None, テキストエリアの高さ)
+INDEED_FIELDS = [
+    ("job_content",         "仕事内容",           None, 200),
+    ("candidate",           "求める人材",         None, 150),
+    ("appeal_points",       "アピールポイント",   None, 150),
+    ("work_days",           "勤務地・曜日",       None, 80),
+    ("work_style",          "勤務形態",           None, 68),
+    ("holidays",            "休暇休日",           None, 100),
+    ("work_location",       "勤務地所在地",       None, 68),
+    ("work_location_note",  "勤務地備考",         None, 80),
+    ("access",              "アクセス",           None, 80),
+    ("salary",              "給与",               None, 120),
+    ("trial_period",        "試用期間",           None, 80),
+    ("benefits",            "待遇福利厚生",       None, 150),
+    ("social_insurance",    "社会保険",           None, 100),
+    ("company_name",        "企業名",             None, 68),
+    ("hq_location",         "本社所在地",         None, 68),
+    ("industry",            "業種",               None, 68),
+    ("representative",      "代表者",             None, 68),
+    ("others",              "その他",             None, 100),
+]
+
+def validate_indeed_fields(inf):
+    """Indeedの各項目が文字数上限を超えていないかチェックする。超過している項目のリストを返す"""
+    errors = []
+    if len(inf.get("title", "")) > 30:
+        errors.append(f"求人タイトル: {len(inf.get('title', ''))}文字（上限30文字）")
+    if len(inf.get("catch", "")) > 80:
+        errors.append(f"キャッチコピー: {len(inf.get('catch', ''))}文字（上限80文字）")
+    for key, label, limit, _ in INDEED_FIELDS:
+        if limit and len(inf.get(key, "")) > limit:
+            errors.append(f"{label}: {len(inf.get(key, ''))}文字（上限{limit}文字）")
+    return errors
+
+def build_indeed_draft_text(inf):
+    """Indeedの各入力欄を、AIが読める1つの原稿テキスト(項目名・文字数付き)に組み立てる"""
+    parts = [
+        f"■求人タイトル（上限30文字/現在{len(inf.get('title', ''))}文字）\n{inf.get('title', '')}",
+        f"■キャッチコピー（上限80文字/現在{len(inf.get('catch', ''))}文字）\n{inf.get('catch', '')}",
+    ]
+    for key, label, limit, _ in INDEED_FIELDS:
+        val = inf.get(key, "")
+        limit_str = f"上限{limit}文字/現在{len(val)}文字" if limit else f"現在{len(val)}文字"
+        parts.append(f"■{label}（{limit_str}）\n{val}")
+    return "\n\n".join(parts)
 
 # 採点・分析タスクは「創造性」より「再現性」を優先するため、温度を低めに固定する。
 # (0にしても厳密な決定論にはならないが、デフォルト値の1.0と比べて評価のブレは大きく減る)
@@ -252,7 +303,7 @@ if st.session_state.current_step == 0:
         index=_platform_index,
     )
     if target_platform == "Indeed":
-        st.caption("📌 タイトル: 30文字以内（※職種名の一意性を厳守） / キャッチ: 60〜80文字")
+        st.caption("📌 求人タイトル: 30文字以内（※職種名の一意性を厳守） / キャッチコピー: 80文字以内 / その他18項目は下記フォームで個別に入力")
     elif target_platform == "AirWork":
         st.caption("📌 求人タイトル: 自由入力部分30文字以内（雇用形態の自動付与部分は別途） / キャッチコピー: 30文字以内 / その他11項目は下記フォームで個別に入力")
 
@@ -280,7 +331,7 @@ if st.session_state.current_step == 0:
 
             if target_platform == "Indeed":
                 title_rule = "30文字以内。【重要】Indeedの厳格なガイドラインである「職種名の一意性」を絶対厳守すること。タイトル内にアピール文言（例：未経験歓迎、急募など）や装飾記号（【】や★など）は一切含めず、純粋で一般的な職種名のみを記載すること。"
-                catch_rule = "60文字以上〜80文字以内"
+                catch_rule = "80文字以内"
             elif target_platform == "AirWork":
                 title_rule = "自由入力部分30文字以内（雇用形態の自動付与部分は含まない）"
                 catch_rule = "30文字以内"
@@ -339,6 +390,36 @@ if st.session_state.current_step == 0:
                     height=90,
                     placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。",
                 )
+            elif target_platform == "Indeed":
+                st.markdown("### 📄 評価する求人原稿（Indeed入力項目）")
+                st.caption("Indeedの入力欄の並びに合わせています。項目ごとに入力してください。")
+
+                _inf = st.session_state.input_data.get("indeed_fields", {})
+
+                indeed_values = {}
+                indeed_values["title"] = st.text_input(
+                    "求人タイトル（上限30文字）",
+                    value=_inf.get("title", ""),
+                )
+                indeed_values["catch"] = st.text_input(
+                    "キャッチコピー（上限80文字）",
+                    value=_inf.get("catch", ""),
+                )
+                for key, label, limit, height in INDEED_FIELDS:
+                    label_with_limit = f"{label}（上限{limit}文字）" if limit else label
+                    indeed_values[key] = st.text_area(
+                        label_with_limit,
+                        value=_inf.get(key, ""),
+                        height=height,
+                    )
+
+                st.markdown("### 💡 作成の意図・留意点（任意）")
+                draft_intent = st.text_area(
+                    "原稿に込めた思い、懸念点、AIに特に見てほしいポイントなど",
+                    value=st.session_state.input_data.get("draft_intent", ""),
+                    height=90,
+                    placeholder="例：残業が少ないことを一番の売りにしたいが、嫌味にならないか気になっている。",
+                )
             else:
                 st.markdown("### 📄 評価する求人原稿")
                 draft_text = st.text_area(
@@ -366,6 +447,10 @@ if st.session_state.current_step == 0:
             validation_errors = validate_airwork_fields(airwork_values, employment_type)
             combined_draft = build_airwork_draft_text(airwork_values, employment_type)
             is_empty = not any(v.strip() for v in airwork_values.values())
+        elif target_platform == "Indeed":
+            validation_errors = validate_indeed_fields(indeed_values)
+            combined_draft = build_indeed_draft_text(indeed_values)
+            is_empty = not any(v.strip() for v in indeed_values.values())
         else:
             validation_errors = []
             combined_draft = draft_text
@@ -395,6 +480,8 @@ if st.session_state.current_step == 0:
 
             if target_platform == "AirWork":
                 zoning_point = """3. **🔍 SEOと感情訴求のゾーニング**: AirWorkは項目ごとに入力欄が分かれています。「求人タイトル」「キャッチコピー」など検索・クリック獲得に直結する項目に効果的なキーワードが含まれているか、「お仕事について」「求める人材」などの本文で、アルゴリズム向けの機械的な言葉と求職者の心に響く感情的な言葉が適切に使い分けられているかを、項目ごとに具体的に指摘してください。"""
+            elif target_platform == "Indeed":
+                zoning_point = """3. **🔍 SEOと感情訴求のゾーニング**: Indeedは項目ごとに入力欄が分かれています。「求人タイトル」「キャッチコピー」など検索結果・クリック獲得に直結する項目に効果的なキーワードが含まれているか、「仕事内容」「求める人材」「アピールポイント」などの本文で、アルゴリズム向けの機械的な言葉と求職者の心に響く感情的な言葉が適切に使い分けられているかを、項目ごとに具体的に指摘してください。"""
             else:
                 zoning_point = """3. **🔍 SEOと感情訴求のゾーニング（サンドイッチ構造）**: 「アルゴリズム（機械）向けの言葉」と「求職者（人）向けの言葉」が混ざっていないかを評価します。「上部（SEO兼フック）」「中部（感情訴求・ストーリー）」「下部（SEO兼事務的条件）」のサンドイッチ構造で明確に棲み分けができているかを分析してください。"""
 
@@ -413,6 +500,8 @@ if st.session_state.current_step == 0:
                 if target_platform == "AirWork":
                     new_input_data["employment_type"] = employment_type
                     new_input_data["airwork_fields"] = airwork_values
+                elif target_platform == "Indeed":
+                    new_input_data["indeed_fields"] = indeed_values
                 else:
                     new_input_data["draft_text"] = draft_text
 
@@ -444,6 +533,17 @@ else:
             st.text(_af.get("catch", ""))
             for key, label, limit, _height in AIRWORK_FIELDS:
                 _val = _af.get(key, "")
+                _limit_str = f"{len(_val)}/{limit}文字" if limit else f"{len(_val)}文字"
+                st.write(f"**{label}**（{_limit_str}）")
+                st.text(_val)
+        elif _d.get("target_platform") == "Indeed" and _d.get("indeed_fields"):
+            _inf = _d["indeed_fields"]
+            st.write(f"**求人タイトル**（{len(_inf.get('title', ''))}/30文字）")
+            st.text(_inf.get("title", ""))
+            st.write(f"**キャッチコピー**（{len(_inf.get('catch', ''))}/80文字）")
+            st.text(_inf.get("catch", ""))
+            for key, label, limit, _height in INDEED_FIELDS:
+                _val = _inf.get(key, "")
                 _limit_str = f"{len(_val)}/{limit}文字" if limit else f"{len(_val)}文字"
                 st.write(f"**{label}**（{_limit_str}）")
                 st.text(_val)
@@ -560,6 +660,40 @@ if st.session_state.current_step == 3:
 11. 試用・研修期間
 12. 応募とその後の流れ
 13. 会社情報"""
+        elif target_platform == "Indeed":
+            field_limit_lines = "\n".join(
+                f"・{label}: 上限{limit}文字" if limit else f"・{label}: 文字数上限なし"
+                for label, limit in [("求人タイトル", 30), ("キャッチコピー", 80)]
+                + [(l, lim) for _, l, lim, _h in INDEED_FIELDS]
+            )
+            prompt4 = f"""最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
+
+【Indeedの各入力項目と文字数上限】
+{field_limit_lines}
+※求人タイトルは「職種名の一意性」のガイドラインを厳守し、アピール文言や装飾記号は含めないこと。
+
+**✨ 具体的な改善コピー提案**:
+以下20項目それぞれについて、そのまま入力欄にコピペして使えるレベルの改善案を、文字数上限がある項目（求人タイトル・キャッチコピー）は必ず厳守して提示してください。作成者の意図を汲み取りつつ、これまでの採点で減点された部分を補ってください。各項目名を見出しとして明記し、Markdown形式で出力してください。
+1. 求人タイトル
+2. キャッチコピー
+3. 仕事内容
+4. 求める人材
+5. アピールポイント
+6. 勤務地・曜日
+7. 勤務形態
+8. 休暇休日
+9. 勤務地所在地
+10. 勤務地備考
+11. アクセス
+12. 給与
+13. 試用期間
+14. 待遇福利厚生
+15. 社会保険
+16. 企業名
+17. 本社所在地
+18. 業種
+19. 代表者
+20. その他"""
         else:
             prompt4 = f"""最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
 
