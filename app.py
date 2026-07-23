@@ -101,29 +101,27 @@ if "history" not in st.session_state:
     st.session_state.history = []
 
 # タイムアウトやSessionInfo不具合でセッションが飛んだ場合、バックアップから自動復元する。
-# 【重要】この復元処理は、ブラウザセッションにつき最初の1回だけ実行する。
-# current_step==0の間ずっと毎回実行してしまうと、フォーム送信などの操作のたびに
-# 復元処理が割り込み、ちょうど送信した直後の状態と干渉する可能性があるため。
-if "_restore_attempted" not in st.session_state:
-    st.session_state._restore_attempted = True
-    if st.session_state.current_step == 0 and not st.session_state.results:
-        _backup = load_backup()
-        if _backup and (_backup.get("current_step", 0) > 0 or _backup.get("results") or _backup.get("input_data")):
-            st.session_state.current_step = _backup.get("current_step", 0)
-            # 【重要】JSON保存時にdictのキーは必ず文字列化される(例: 1 → "1")。
-            # このアプリはresultsのキーとして整数(1〜4)を使っているため、復元時に
-            # 文字列キーのままだと st.session_state.results.get(1, "") 等が常にヒットせず
-            # 「結果が空欄のまま」という、エラーにもならない不具合につながる。整数に戻す。
-            _restored_results = _backup.get("results", {})
-            st.session_state.results = {int(k): v for k, v in _restored_results.items()}
-            st.session_state.ai_messages = _backup.get("ai_messages", [])
-            st.session_state.input_data = _backup.get("input_data", {})
-            # 改訂履歴の各版が持つresultsも同じ理由でキーを整数に戻す
-            _restored_history = _backup.get("history", [])
-            for _v in _restored_history:
-                if isinstance(_v.get("results"), dict):
-                    _v["results"] = {int(k): val for k, val in _v["results"].items()}
-            st.session_state.history = _restored_history
+# 【重要】この処理はセッション中に何度でも実行されうる。「1回だけ」に制限すると、
+# 同じセッション内で2回目以降に不具合が起きた際に復元できなくなってしまうため、
+# current_step==0かつ結果が空の間は、その都度チェックする。
+if st.session_state.current_step == 0 and not st.session_state.results:
+    _backup = load_backup()
+    if _backup and (_backup.get("current_step", 0) > 0 or _backup.get("results") or _backup.get("input_data")):
+        st.session_state.current_step = _backup.get("current_step", 0)
+        # 【重要】JSON保存時にdictのキーは必ず文字列化される(例: 1 → "1")。
+        # このアプリはresultsのキーとして整数(1〜4)を使っているため、復元時に
+        # 文字列キーのままだと st.session_state.results.get(1, "") 等が常にヒットせず
+        # 「結果が空欄のまま」という、エラーにもならない不具合につながる。整数に戻す。
+        _restored_results = _backup.get("results", {})
+        st.session_state.results = {int(k): v for k, v in _restored_results.items()}
+        st.session_state.ai_messages = _backup.get("ai_messages", [])
+        st.session_state.input_data = _backup.get("input_data", {})
+        # 改訂履歴の各版が持つresultsも同じ理由でキーを整数に戻す
+        _restored_history = _backup.get("history", [])
+        for _v in _restored_history:
+            if isinstance(_v.get("results"), dict):
+                _v["results"] = {int(k): val for k, val in _v["results"].items()}
+        st.session_state.history = _restored_history
 
 # ── ヘッダー ────────────────────────────────────────────────────
 st.markdown("""
@@ -303,10 +301,12 @@ def call_ai(prompt, step_name, step_number=None):
                     if now - _last_update >= 8:
                         result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
                         _last_update = now
-                    # 生成途中で接続が切れても被害を最小限にするため、定期的に途中経過だけは保存しておく
-                    if step_number is not None and _chunk % 40 == 0:
-                        st.session_state.results[step_number] = full_response
-                        save_backup()
+                        # 生成途中で接続が切れても被害を最小限にするため、画面更新と同じタイミングで
+                        # 途中経過も必ず保存しておく（チャンク数ベースだと更新頻度とズレて
+                        # 保存されないまま切断されることがあったため、時間ベースに統一する）
+                        if step_number is not None:
+                            st.session_state.results[step_number] = full_response
+                            save_backup()
 
         result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
 
