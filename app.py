@@ -3,6 +3,7 @@ import anthropic
 import os
 import math
 import json
+import time
 
 # ── ページ設定 ──────────────────────────────────────────────────
 st.set_page_config(
@@ -278,6 +279,7 @@ def call_ai(prompt, step_name, step_number=None):
         st.session_state.ai_messages.append({"role": "user", "content": prompt})
 
         full_response = ""
+        result_placeholder = st.empty()
 
         with st.spinner(f"{step_name} を実行中...（画面は動きませんが処理は進んでいます）"):
             with client.messages.stream(
@@ -288,18 +290,24 @@ def call_ai(prompt, step_name, step_number=None):
                 messages=st.session_state.ai_messages,
             ) as stream:
                 _chunk = 0
+                _last_update = time.time()
                 for text in stream.text_stream:
                     full_response += text
                     _chunk += 1
-                    # 【重要】生成中は画面を一切更新しない。1文字ずつ描画すると、その回数分の
-                    # WebSocket通信が発生し「Bad message format」を誘発しやすくなるため、
-                    # 生成完了後に一度だけ描画する（下のresult_placeholderで実施）。
+                    # 【重要】生成中に何十秒も画面を全く更新しないと、ブラウザ側のWebSocket接続が
+                    # 「無反応」とみなされて切断され、セッションがリセットされることがある
+                    # (Streamlit自体の既知の挙動)。かといって毎トークン描画すると別の不具合
+                    # (Bad message format)を誘発するため、約8秒に1回だけ軽く更新することで
+                    # 「多すぎる通信」と「長時間の無反応」の両方を避ける。
+                    now = time.time()
+                    if now - _last_update >= 8:
+                        result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
+                        _last_update = now
                     # 生成途中で接続が切れても被害を最小限にするため、定期的に途中経過だけは保存しておく
                     if step_number is not None and _chunk % 40 == 0:
                         st.session_state.results[step_number] = full_response
                         save_backup()
 
-        result_placeholder = st.empty()
         result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
 
         st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
