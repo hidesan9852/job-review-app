@@ -4,6 +4,7 @@ import os
 import math
 import json
 import time
+from datetime import datetime
 
 # ── ページ設定 ──────────────────────────────────────────────────
 st.set_page_config(
@@ -122,6 +123,34 @@ if st.session_state.current_step == 0 and not st.session_state.results:
             if isinstance(_v.get("results"), dict):
                 _v["results"] = {int(k): val for k, val in _v["results"].items()}
         st.session_state.history = _restored_history
+
+# ── 🔧 デバッグ用:バックアップファイルの実際の状態を可視化 ──────────
+# 【重要】「保存されているはず」という推測ではなく、実際にファイルが今どうなっているかを
+# その場で確認できるようにする。クラッシュ直後にこのパネルを開けば、ファイルへの書き込み
+# 自体が行われているか、内容が正しいかを、コード修正の当て推量なしで判断できる。
+with st.sidebar:
+    st.markdown("### 🔧 デバッグ: バックアップ状態")
+    if os.path.exists(BACKUP_FILE):
+        _stat = os.stat(BACKUP_FILE)
+        st.write(f"**ファイル**: 存在する")
+        st.write(f"**サイズ**: {_stat.st_size:,} バイト")
+        st.write(f"**最終更新**: {datetime.fromtimestamp(_stat.st_mtime).strftime('%H:%M:%S')}")
+        try:
+            with open(BACKUP_FILE, "r", encoding="utf-8") as _f:
+                _debug_content = json.load(_f)
+            st.write(f"**current_step**: {_debug_content.get('current_step')}")
+            _debug_results = _debug_content.get("results", {})
+            st.write(f"**resultsのキー**: {list(_debug_results.keys())}")
+            for _k, _v in _debug_results.items():
+                st.caption(f"　└ results[{_k}]: {len(_v) if _v else 0}文字")
+            st.write(f"**input_dataのキー**: {list(_debug_content.get('input_data', {}).keys())}")
+        except Exception as _e:
+            st.error(f"ファイルは存在するが読み込み失敗: {_e}")
+    else:
+        st.write("**ファイル**: 存在しない")
+    st.caption(f"現在のsession_state.current_step = {st.session_state.get('current_step')}")
+    st.caption(f"現在のsession_state.resultsのキー = {list(st.session_state.get('results', {}).keys())}")
+    st.markdown("---")
 
 # ── ヘッダー ────────────────────────────────────────────────────
 st.markdown("""
