@@ -107,10 +107,20 @@ if st.session_state.current_step == 0 and not st.session_state.results:
     _backup = load_backup()
     if _backup and (_backup.get("current_step", 0) > 0 or _backup.get("results") or _backup.get("input_data")):
         st.session_state.current_step = _backup.get("current_step", 0)
-        st.session_state.results = _backup.get("results", {})
+        # 【重要】JSON保存時にdictのキーは必ず文字列化される(例: 1 → "1")。
+        # このアプリはresultsのキーとして整数(1〜4)を使っているため、復元時に
+        # 文字列キーのままだと st.session_state.results.get(1, "") 等が常にヒットせず
+        # 「結果が空欄のまま」という、エラーにもならない不具合につながる。整数に戻す。
+        _restored_results = _backup.get("results", {})
+        st.session_state.results = {int(k): v for k, v in _restored_results.items()}
         st.session_state.ai_messages = _backup.get("ai_messages", [])
         st.session_state.input_data = _backup.get("input_data", {})
-        st.session_state.history = _backup.get("history", [])
+        # 改訂履歴の各版が持つresultsも同じ理由でキーを整数に戻す
+        _restored_history = _backup.get("history", [])
+        for _v in _restored_history:
+            if isinstance(_v.get("results"), dict):
+                _v["results"] = {int(k): val for k, val in _v["results"].items()}
+        st.session_state.history = _restored_history
 
 # ── ヘッダー ────────────────────────────────────────────────────
 st.markdown("""
