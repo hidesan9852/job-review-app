@@ -99,10 +99,13 @@ if "input_data" not in st.session_state:
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# タイムアウトやSessionInfo不具合でセッションが飛んだ場合、バックアップから自動復元する
+# タイムアウトやSessionInfo不具合でセッションが飛んだ場合、バックアップから自動復元する。
+# 【重要】current_stepが完全に進んでいる場合だけでなく、生成途中のチェックポイント
+# (current_stepはまだ0/前のままだが、resultsに部分的な内容が保存されている状態)も
+# 復元対象にする。そうしないと、STEP完了直前で接続が切れた際の保存が無意味になる。
 if st.session_state.current_step == 0 and not st.session_state.results:
     _backup = load_backup()
-    if _backup and _backup.get("current_step", 0) > 0:
+    if _backup and (_backup.get("current_step", 0) > 0 or _backup.get("results") or _backup.get("input_data")):
         st.session_state.current_step = _backup.get("current_step", 0)
         st.session_state.results = _backup.get("results", {})
         st.session_state.ai_messages = _backup.get("ai_messages", [])
@@ -519,25 +522,29 @@ if st.session_state.current_step == 0:
 
             prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の3点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。（※作成の意図があれば、その成功度も評価）ただし、コントラストを鮮明にするために前職への批判や、過度にネガティブ・不安を煽る表現（例:「放任されていた」「社会保険にも入っていない」等を強調する言い回し）を使っている場合は、それは高評価ではなく、誠実さを欠く表現として明確に指摘してください。\n{zoning_point}"""
 
+            # 【重要】AI呼び出しの前に入力内容を保存しておく。呼び出し後に保存すると、
+            # 生成が完了する前に接続が切れた場合、そこまで入力した内容ごと失われてしまう。
+            new_input_data = {
+                "persona_text": persona_text,
+                "target_keywords": target_keywords,
+                "target_platform": target_platform,
+                "title_rule": title_rule,
+                "catch_rule": catch_rule,
+                "draft_intent": draft_intent,
+            }
+            if target_platform == "AirWork":
+                new_input_data["employment_type"] = employment_type
+                new_input_data["airwork_fields"] = airwork_values
+            elif target_platform == "Indeed":
+                new_input_data["indeed_fields"] = indeed_values
+            else:
+                new_input_data["draft_text"] = draft_text
+
+            st.session_state.input_data = new_input_data
+            save_backup()
+
             response = call_ai(prompt1, "STEP 1", step_number=1)
             if response:
-                new_input_data = {
-                    "persona_text": persona_text,
-                    "target_keywords": target_keywords,
-                    "target_platform": target_platform,
-                    "title_rule": title_rule,
-                    "catch_rule": catch_rule,
-                    "draft_intent": draft_intent,
-                }
-                if target_platform == "AirWork":
-                    new_input_data["employment_type"] = employment_type
-                    new_input_data["airwork_fields"] = airwork_values
-                elif target_platform == "Indeed":
-                    new_input_data["indeed_fields"] = indeed_values
-                else:
-                    new_input_data["draft_text"] = draft_text
-
-                st.session_state.input_data = new_input_data
                 st.session_state.results[1] = response
                 st.session_state.current_step = 1
                 save_backup()
