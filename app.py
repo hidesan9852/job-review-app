@@ -53,8 +53,14 @@ html, body, [class*="css"] { font-family: 'Noto Sans JP', 'Inter', sans-serif; }
 BACKUP_FILE = "streamlit_scoring_backup.json"
 
 def save_backup():
+    # 【重要】ファイルに直接書き込むと、書き込みの途中でプロセスが強制終了した場合に
+    # 「空っぽ・壊れたファイル」が残ってしまい、それ以降ずっと復元できなくなる。
+    # 一時ファイルに書き終えてから os.replace() で置き換えることで、書き込みが
+    # 「完全に成功する」か「何も変わらない(直前の正常なファイルが残る)」かの
+    # どちらかしか起こらないようにする(このrenameはOSレベルで原子的な操作)。
+    tmp_file = BACKUP_FILE + ".tmp"
     try:
-        with open(BACKUP_FILE, "w", encoding="utf-8") as f:
+        with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump({
                 "current_step": st.session_state.current_step,
                 "results": st.session_state.results,
@@ -62,6 +68,9 @@ def save_backup():
                 "input_data": st.session_state.input_data,
                 "history": st.session_state.history,
             }, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_file, BACKUP_FILE)
     except Exception:
         pass
 
