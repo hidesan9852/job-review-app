@@ -257,25 +257,35 @@ def build_indeed_draft_text(inf):
 # (0にしても厳密な決定論にはならないが、デフォルト値の1.0と比べて評価のブレは大きく減る)
 EVAL_TEMPERATURE = 0.2
 
-def call_ai(prompt, step_name):
+def call_ai(prompt, step_name, step_number=None):
     try:
         client = anthropic.Anthropic(api_key=api_key)
         st.session_state.ai_messages.append({"role": "user", "content": prompt})
 
-        result_placeholder = st.empty()
         full_response = ""
 
-        with st.spinner(f"{step_name} を実行中..."):
+        with st.spinner(f"{step_name} を実行中...（画面は動きませんが処理は進んでいます）"):
             with client.messages.stream(
                 model="claude-sonnet-4-6",
-                max_tokens=4096,
+                max_tokens=16384,
                 temperature=EVAL_TEMPERATURE,
                 system=SYSTEM_PROMPT,
                 messages=st.session_state.ai_messages,
             ) as stream:
+                _chunk = 0
                 for text in stream.text_stream:
                     full_response += text
-                    result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
+                    _chunk += 1
+                    # 【重要】生成中は画面を一切更新しない。1文字ずつ描画すると、その回数分の
+                    # WebSocket通信が発生し「Bad message format」を誘発しやすくなるため、
+                    # 生成完了後に一度だけ描画する（下のresult_placeholderで実施）。
+                    # 生成途中で接続が切れても被害を最小限にするため、定期的に途中経過だけは保存しておく
+                    if step_number is not None and _chunk % 40 == 0:
+                        st.session_state.results[step_number] = full_response
+                        save_backup()
+
+        result_placeholder = st.empty()
+        result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
 
         st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
         return full_response
@@ -331,7 +341,26 @@ if st.session_state.current_step == 0:
             catch_rule = ""
 
             if target_platform == "Indeed":
-                title_rule = "30文字以内。【重要】Indeedの厳格なガイドラインである「職種名の一意性」を絶対厳守すること。タイトル内にアピール文言（例：未経験歓迎、急募など）や装飾記号（【】や★など）は一切含めず、純粋で一般的な職種名のみを記載すること。"
+                title_rule = """30文字以内。Indeedの実際のガイドラインに基づき、以下を厳守すること。
+
+【✅ 記載してよい・むしろ推奨されること】
+仕事内容そのものを具体化する情報は、アピール文言ではなく「求人の質」を上げる要素としてIndeedに評価される。
+・取り扱う商品/サービスの種類（例:「営業」→「不動産投資の反響営業」）
+・対象とする顧客/施設の種類（例:「設計技術者」→「医療機器の設計技術者」）
+・専門分野や必須資格名（例:「介護職」→「生活相談員（社会福祉士）」）
+・勤務先の業態を括弧書きで補足し、コア業務（職種）を先頭に置く（例:「キッチンスタッフ（保育園）」）。
+  ※これは装飾ではなく、Indeed側のカテゴリ分類・検索マッチング精度を上げるための実務的なテクニック。
+  ※逆に「保育園のキッチンスタッフ」のように施設名を先頭にすると、Indeedが誤ったカテゴリ（保育士カテゴリ等）に分類し、本来ターゲットにしたい求職者（調理職を探している人）に届きにくくなる。必ずコア業務を先頭に置くこと。
+  ※【重要】括弧内で補足してよいのは、原則として1つの明確な要素（施設タイプ・商材・対象顧客のいずれか1つ）に絞ること。カンマ区切りで複数の要素を列挙すると、内容の説明ではなく検索キーワードの羅列とみなされるリスクが上がる。複数の事業領域を扱っている場合は、最も特徴的・差別化になる1つだけを選んで記載すること。これは明確な減点対象として指摘すること（「グレーゾーン」ではなく具体的な修正指示として扱う）。
+
+【❌ 記載してはいけないこと（Indeedが明確に禁止）】
+・候補者の条件・歓迎要素（例:「未経験歓迎」「経験者歓迎」「経験不問」）
+・待遇・勤務条件に関するアピール（例:「高時給」「短時間勤務」「オープニングスタッフ」「急募」）
+・記号による装飾（例:「！」「♪」「★」「【】」などの強調記号）
+・1求人に複数の職種名を並記すること（1求人＝1職種が原則）
+
+これらを踏まえ、単に「シンプルすぎる」「情報が薄い」と評するだけでなく上記【✅】に該当する具体的な追加要素を提案し、単に「ガイドライン違反」と切り捨てるだけでなく上記【❌】のどの項目に該当するかを名指しで指摘すること。
+【重要】判定は上記の【✅】【❌】の基準のみに基づいて行うこと。ここに明記されていない、より厳格な独自基準（「職種名・勤務形態・資格以外は一切不可」等）を持ち出して減点しないこと。上記に該当しない限り、業務内容の具体化は加点要素として扱うこと。"""
                 catch_rule = "80文字以内"
             elif target_platform == "AirWork":
                 title_rule = "自由入力部分30文字以内（雇用形態の自動付与部分は含まない）"
@@ -490,7 +519,7 @@ if st.session_state.current_step == 0:
 
             prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の3点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。（※作成の意図があれば、その成功度も評価）ただし、コントラストを鮮明にするために前職への批判や、過度にネガティブ・不安を煽る表現（例:「放任されていた」「社会保険にも入っていない」等を強調する言い回し）を使っている場合は、それは高評価ではなく、誠実さを欠く表現として明確に指摘してください。\n{zoning_point}"""
 
-            response = call_ai(prompt1, "STEP 1")
+            response = call_ai(prompt1, "STEP 1", step_number=1)
             if response:
                 new_input_data = {
                     "persona_text": persona_text,
@@ -597,7 +626,7 @@ if st.session_state.current_step == 1:
 ② 適合性の納得（シフトの悩みが解決すると確信できるか）
 ③ 将来の魅力（入社後のキャリア像にワクワクするか）
 ④ 応募へのハードル（今すぐ応募ボタンを押したくなるか）"""
-        response = call_ai(prompt2, "STEP 2")
+        response = call_ai(prompt2, "STEP 2", step_number=2)
         if response:
             st.session_state.results[2] = response
             st.session_state.current_step = 2
@@ -614,7 +643,7 @@ if st.session_state.current_step >= 2:
 if st.session_state.current_step == 2:
     if st.button("🏆 STEP 3: 総合評価とCV期待度の算出を実行"):
         prompt3 = """ありがとうございます。次に、これまでの分析を総括し、以下の項目を出力してください。\n**🏆 総合評価**: 目標である「ペルソナ層からの応募 月5件以上」を見込めるか、総合的な「CV期待度スコア（100点満点）」を提示し、現状の課題に関する結論を論理的に述べてください。※具体的な改善コピーの作成は次のステップで行うので、ここでは課題の総括にとどめてください。"""
-        response = call_ai(prompt3, "STEP 3")
+        response = call_ai(prompt3, "STEP 3", step_number=3)
         if response:
             st.session_state.results[3] = response
             st.session_state.current_step = 3
@@ -674,7 +703,9 @@ if st.session_state.current_step == 3:
 
 【Indeedの各入力項目と文字数上限】
 {field_limit_lines}
-※求人タイトルは「職種名の一意性」のガイドラインを厳守し、アピール文言や装飾記号は含めないこと。
+
+【求人タイトルの判定基準】
+{title_rule}
 
 **✨ 具体的な改善コピー提案**:
 以下20項目それぞれについて、そのまま入力欄にコピペして使えるレベルの改善案を、文字数上限がある項目（求人タイトル・キャッチコピー）は必ず厳守して提示してください。作成者の意図を汲み取りつつ、これまでの採点で減点された部分を補ってください。各項目名を見出しとして明記し、Markdown形式で出力してください。
@@ -715,7 +746,7 @@ if st.session_state.current_step == 3:
 3. **下部（SEO兼事務的条件ゾーン）**: 求める人材や福利厚生など、アルゴリズムに対するキーワードの網羅性を担保する。
 
 見出しには検索キーワードを組み込み、感情は検索キーワードに翻訳（言い換え）して配置すること。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
-        response = call_ai(prompt4, "STEP 4")
+        response = call_ai(prompt4, "STEP 4", step_number=4)
         if response:
             st.session_state.results[4] = response
             st.session_state.current_step = 4
