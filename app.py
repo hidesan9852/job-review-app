@@ -100,27 +100,29 @@ if "history" not in st.session_state:
     st.session_state.history = []
 
 # タイムアウトやSessionInfo不具合でセッションが飛んだ場合、バックアップから自動復元する。
-# 【重要】current_stepが完全に進んでいる場合だけでなく、生成途中のチェックポイント
-# (current_stepはまだ0/前のままだが、resultsに部分的な内容が保存されている状態)も
-# 復元対象にする。そうしないと、STEP完了直前で接続が切れた際の保存が無意味になる。
-if st.session_state.current_step == 0 and not st.session_state.results:
-    _backup = load_backup()
-    if _backup and (_backup.get("current_step", 0) > 0 or _backup.get("results") or _backup.get("input_data")):
-        st.session_state.current_step = _backup.get("current_step", 0)
-        # 【重要】JSON保存時にdictのキーは必ず文字列化される(例: 1 → "1")。
-        # このアプリはresultsのキーとして整数(1〜4)を使っているため、復元時に
-        # 文字列キーのままだと st.session_state.results.get(1, "") 等が常にヒットせず
-        # 「結果が空欄のまま」という、エラーにもならない不具合につながる。整数に戻す。
-        _restored_results = _backup.get("results", {})
-        st.session_state.results = {int(k): v for k, v in _restored_results.items()}
-        st.session_state.ai_messages = _backup.get("ai_messages", [])
-        st.session_state.input_data = _backup.get("input_data", {})
-        # 改訂履歴の各版が持つresultsも同じ理由でキーを整数に戻す
-        _restored_history = _backup.get("history", [])
-        for _v in _restored_history:
-            if isinstance(_v.get("results"), dict):
-                _v["results"] = {int(k): val for k, val in _v["results"].items()}
-        st.session_state.history = _restored_history
+# 【重要】この復元処理は、ブラウザセッションにつき最初の1回だけ実行する。
+# current_step==0の間ずっと毎回実行してしまうと、フォーム送信などの操作のたびに
+# 復元処理が割り込み、ちょうど送信した直後の状態と干渉する可能性があるため。
+if "_restore_attempted" not in st.session_state:
+    st.session_state._restore_attempted = True
+    if st.session_state.current_step == 0 and not st.session_state.results:
+        _backup = load_backup()
+        if _backup and (_backup.get("current_step", 0) > 0 or _backup.get("results") or _backup.get("input_data")):
+            st.session_state.current_step = _backup.get("current_step", 0)
+            # 【重要】JSON保存時にdictのキーは必ず文字列化される(例: 1 → "1")。
+            # このアプリはresultsのキーとして整数(1〜4)を使っているため、復元時に
+            # 文字列キーのままだと st.session_state.results.get(1, "") 等が常にヒットせず
+            # 「結果が空欄のまま」という、エラーにもならない不具合につながる。整数に戻す。
+            _restored_results = _backup.get("results", {})
+            st.session_state.results = {int(k): v for k, v in _restored_results.items()}
+            st.session_state.ai_messages = _backup.get("ai_messages", [])
+            st.session_state.input_data = _backup.get("input_data", {})
+            # 改訂履歴の各版が持つresultsも同じ理由でキーを整数に戻す
+            _restored_history = _backup.get("history", [])
+            for _v in _restored_history:
+                if isinstance(_v.get("results"), dict):
+                    _v["results"] = {int(k): val for k, val in _v["results"].items()}
+            st.session_state.history = _restored_history
 
 # ── ヘッダー ────────────────────────────────────────────────────
 st.markdown("""
