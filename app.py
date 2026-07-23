@@ -3,8 +3,6 @@ import anthropic
 import os
 import math
 import json
-import time
-from datetime import datetime
 
 # ── ページ設定 ──────────────────────────────────────────────────
 st.set_page_config(
@@ -53,14 +51,8 @@ html, body, [class*="css"] { font-family: 'Noto Sans JP', 'Inter', sans-serif; }
 BACKUP_FILE = "streamlit_scoring_backup.json"
 
 def save_backup():
-    # 【重要】ファイルに直接書き込むと、書き込みの途中でプロセスが強制終了した場合に
-    # 「空っぽ・壊れたファイル」が残ってしまい、それ以降ずっと復元できなくなる。
-    # 一時ファイルに書き終えてから os.replace() で置き換えることで、書き込みが
-    # 「完全に成功する」か「何も変わらない(直前の正常なファイルが残る)」かの
-    # どちらかしか起こらないようにする(このrenameはOSレベルで原子的な操作)。
-    tmp_file = BACKUP_FILE + ".tmp"
     try:
-        with open(tmp_file, "w", encoding="utf-8") as f:
+        with open(BACKUP_FILE, "w", encoding="utf-8") as f:
             json.dump({
                 "current_step": st.session_state.current_step,
                 "results": st.session_state.results,
@@ -68,9 +60,6 @@ def save_backup():
                 "input_data": st.session_state.input_data,
                 "history": st.session_state.history,
             }, f, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_file, BACKUP_FILE)
     except Exception:
         pass
 
@@ -110,28 +99,15 @@ if "input_data" not in st.session_state:
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# タイムアウトやSessionInfo不具合でセッションが飛んだ場合、バックアップから自動復元する。
-# 【重要】この処理はセッション中に何度でも実行されうる。「1回だけ」に制限すると、
-# 同じセッション内で2回目以降に不具合が起きた際に復元できなくなってしまうため、
-# current_step==0かつ結果が空の間は、その都度チェックする。
+# タイムアウトやSessionInfo不具合でセッションが飛んだ場合、バックアップから自動復元する
 if st.session_state.current_step == 0 and not st.session_state.results:
     _backup = load_backup()
-    if _backup and (_backup.get("current_step", 0) > 0 or _backup.get("results") or _backup.get("input_data")):
+    if _backup and _backup.get("current_step", 0) > 0:
         st.session_state.current_step = _backup.get("current_step", 0)
-        # 【重要】JSON保存時にdictのキーは必ず文字列化される(例: 1 → "1")。
-        # このアプリはresultsのキーとして整数(1〜4)を使っているため、復元時に
-        # 文字列キーのままだと st.session_state.results.get(1, "") 等が常にヒットせず
-        # 「結果が空欄のまま」という、エラーにもならない不具合につながる。整数に戻す。
-        _restored_results = _backup.get("results", {})
-        st.session_state.results = {int(k): v for k, v in _restored_results.items()}
+        st.session_state.results = _backup.get("results", {})
         st.session_state.ai_messages = _backup.get("ai_messages", [])
         st.session_state.input_data = _backup.get("input_data", {})
-        # 改訂履歴の各版が持つresultsも同じ理由でキーを整数に戻す
-        _restored_history = _backup.get("history", [])
-        for _v in _restored_history:
-            if isinstance(_v.get("results"), dict):
-                _v["results"] = {int(k): val for k, val in _v["results"].items()}
-        st.session_state.history = _restored_history
+        st.session_state.history = _backup.get("history", [])
 
 # ── ヘッダー ────────────────────────────────────────────────────
 st.markdown("""
@@ -281,15 +257,15 @@ def build_indeed_draft_text(inf):
 # (0にしても厳密な決定論にはならないが、デフォルト値の1.0と比べて評価のブレは大きく減る)
 EVAL_TEMPERATURE = 0.2
 
-def call_ai(prompt, step_name, step_number=None):
+def call_ai(prompt, step_name):
     try:
         client = anthropic.Anthropic(api_key=api_key)
         st.session_state.ai_messages.append({"role": "user", "content": prompt})
 
-        full_response = ""
         result_placeholder = st.empty()
+        full_response = ""
 
-        with st.spinner(f"{step_name} を実行中...（画面は動きませんが処理は進んでいます）"):
+        with st.spinner(f"{step_name} を実行中..."):
             with client.messages.stream(
                 model="claude-sonnet-4-6",
                 max_tokens=16384,
@@ -297,28 +273,9 @@ def call_ai(prompt, step_name, step_number=None):
                 system=SYSTEM_PROMPT,
                 messages=st.session_state.ai_messages,
             ) as stream:
-                _chunk = 0
-                _last_update = time.time()
                 for text in stream.text_stream:
                     full_response += text
-                    _chunk += 1
-                    # 【重要】生成中に何十秒も画面を全く更新しないと、ブラウザ側のWebSocket接続が
-                    # 「無反応」とみなされて切断され、セッションがリセットされることがある
-                    # (Streamlit自体の既知の挙動)。かといって毎トークン描画すると別の不具合
-                    # (Bad message format)を誘発するため、約8秒に1回だけ軽く更新することで
-                    # 「多すぎる通信」と「長時間の無反応」の両方を避ける。
-                    now = time.time()
-                    if now - _last_update >= 8:
-                        result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
-                        _last_update = now
-                        # 生成途中で接続が切れても被害を最小限にするため、画面更新と同じタイミングで
-                        # 途中経過も必ず保存しておく（チャンク数ベースだと更新頻度とズレて
-                        # 保存されないまま切断されることがあったため、時間ベースに統一する）
-                        if step_number is not None:
-                            st.session_state.results[step_number] = full_response
-                            save_backup()
-
-        result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
+                    result_placeholder.markdown(f'<div class="result-block">{full_response}</div>', unsafe_allow_html=True)
 
         st.session_state.ai_messages.append({"role": "assistant", "content": full_response})
         return full_response
@@ -552,29 +509,25 @@ if st.session_state.current_step == 0:
 
             prompt1 = f"""{CONTEXT}\n上記の前提を踏まえ、以下の3点について見やすいMarkdown形式で分析を出力してください。\n1. **⏱️ 読解タイム・コスト評価**: 物理的な読解時間を踏まえ、ペルソナの隙間時間に読まれる想定として適切か。\n2. **🔄 Before/After の伝達度**: ペルソナの「現状の悩み」から「入社後の変化」のコントラストが鮮明に描かれているか。（※作成の意図があれば、その成功度も評価）ただし、コントラストを鮮明にするために前職への批判や、過度にネガティブ・不安を煽る表現（例:「放任されていた」「社会保険にも入っていない」等を強調する言い回し）を使っている場合は、それは高評価ではなく、誠実さを欠く表現として明確に指摘してください。\n{zoning_point}"""
 
-            # 【重要】AI呼び出しの前に入力内容を保存しておく。呼び出し後に保存すると、
-            # 生成が完了する前に接続が切れた場合、そこまで入力した内容ごと失われてしまう。
-            new_input_data = {
-                "persona_text": persona_text,
-                "target_keywords": target_keywords,
-                "target_platform": target_platform,
-                "title_rule": title_rule,
-                "catch_rule": catch_rule,
-                "draft_intent": draft_intent,
-            }
-            if target_platform == "AirWork":
-                new_input_data["employment_type"] = employment_type
-                new_input_data["airwork_fields"] = airwork_values
-            elif target_platform == "Indeed":
-                new_input_data["indeed_fields"] = indeed_values
-            else:
-                new_input_data["draft_text"] = draft_text
-
-            st.session_state.input_data = new_input_data
-            save_backup()
-
-            response = call_ai(prompt1, "STEP 1", step_number=1)
+            response = call_ai(prompt1, "STEP 1")
             if response:
+                new_input_data = {
+                    "persona_text": persona_text,
+                    "target_keywords": target_keywords,
+                    "target_platform": target_platform,
+                    "title_rule": title_rule,
+                    "catch_rule": catch_rule,
+                    "draft_intent": draft_intent,
+                }
+                if target_platform == "AirWork":
+                    new_input_data["employment_type"] = employment_type
+                    new_input_data["airwork_fields"] = airwork_values
+                elif target_platform == "Indeed":
+                    new_input_data["indeed_fields"] = indeed_values
+                else:
+                    new_input_data["draft_text"] = draft_text
+
+                st.session_state.input_data = new_input_data
                 st.session_state.results[1] = response
                 st.session_state.current_step = 1
                 save_backup()
@@ -663,7 +616,7 @@ if st.session_state.current_step == 1:
 ② 適合性の納得（シフトの悩みが解決すると確信できるか）
 ③ 将来の魅力（入社後のキャリア像にワクワクするか）
 ④ 応募へのハードル（今すぐ応募ボタンを押したくなるか）"""
-        response = call_ai(prompt2, "STEP 2", step_number=2)
+        response = call_ai(prompt2, "STEP 2")
         if response:
             st.session_state.results[2] = response
             st.session_state.current_step = 2
@@ -680,7 +633,7 @@ if st.session_state.current_step >= 2:
 if st.session_state.current_step == 2:
     if st.button("🏆 STEP 3: 総合評価とCV期待度の算出を実行"):
         prompt3 = """ありがとうございます。次に、これまでの分析を総括し、以下の項目を出力してください。\n**🏆 総合評価**: 目標である「ペルソナ層からの応募 月5件以上」を見込めるか、総合的な「CV期待度スコア（100点満点）」を提示し、現状の課題に関する結論を論理的に述べてください。※具体的な改善コピーの作成は次のステップで行うので、ここでは課題の総括にとどめてください。"""
-        response = call_ai(prompt3, "STEP 3", step_number=3)
+        response = call_ai(prompt3, "STEP 3")
         if response:
             st.session_state.results[3] = response
             st.session_state.current_step = 3
@@ -783,7 +736,7 @@ if st.session_state.current_step == 3:
 3. **下部（SEO兼事務的条件ゾーン）**: 求める人材や福利厚生など、アルゴリズムに対するキーワードの網羅性を担保する。
 
 見出しには検索キーワードを組み込み、感情は検索キーワードに翻訳（言い換え）して配置すること。プロのコピーライターとして、魅力を最大化した実際の文章を提示してください。"""
-        response = call_ai(prompt4, "STEP 4", step_number=4)
+        response = call_ai(prompt4, "STEP 4")
         if response:
             st.session_state.results[4] = response
             st.session_state.current_step = 4
