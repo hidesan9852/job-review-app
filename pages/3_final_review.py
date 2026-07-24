@@ -67,9 +67,10 @@ if st.session_state.current_step == 3:
         elif target_platform == "Indeed":
             field_limit_lines = "\n".join(
                 f"・{label}: 上限{limit}文字" if limit else f"・{label}: 文字数上限なし"
-                for label, limit in [("求人タイトル", 30), ("キャッチコピー", 80)]
+                for label, limit in [("求人タイトル", 30)]
                 + [(l, lim) for _, l, lim, _h in INDEED_FIELDS]
             )
+            field_limit_lines = f"・キャッチコピー: 60文字以上70文字以内（この範囲を厳守すること）\n{field_limit_lines}"
             prompt4 = f"""最後のステップです。これまでのすべての分析と総合評価の課題を踏まえて、最高の結果を出すための【改善コピー提案】を出力してください。
 
 【Indeedの各入力項目と文字数上限】
