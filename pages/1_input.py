@@ -24,7 +24,7 @@ target_platform = st.selectbox(
     index=_platform_index,
 )
 if target_platform == "Indeed":
-    st.caption("📌 求人タイトル: 30文字以内（※職種名の一意性を厳守） / キャッチコピー: 80文字以内 / その他18項目は下記フォームで個別に入力")
+    st.caption("📌 求人タイトル: 30文字以内（※職種名の一意性を厳守） / キャッチコピー: 60文字以上70文字以内 / その他18項目は下記フォームで個別に入力")
 elif target_platform == "AirWork":
     st.caption("📌 求人タイトル: 自由入力部分30文字以内（雇用形態の自動付与部分は別途） / キャッチコピー: 30文字以内 / その他11項目は下記フォームで個別に入力")
 
@@ -53,7 +53,7 @@ with st.form("input_form", border=False):
 
         if target_platform == "Indeed":
             title_rule = get_indeed_title_rule()
-            catch_rule = "80文字以内"
+            catch_rule = "60文字以上〜70文字以内"
         elif target_platform == "AirWork":
             title_rule = "自由入力部分30文字以内（雇用形態の自動付与部分は含まない）"
             catch_rule = "30文字以内"
@@ -124,7 +124,7 @@ with st.form("input_form", border=False):
                 value=_inf.get("title", ""),
             )
             indeed_values["catch"] = st.text_input(
-                "キャッチコピー（上限80文字）",
+                "キャッチコピー（60文字以上70文字以内）",
                 value=_inf.get("catch", ""),
             )
             for key, label, limit, height in INDEED_FIELDS:
