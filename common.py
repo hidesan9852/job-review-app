@@ -204,8 +204,8 @@ def validate_indeed_fields(inf):
     errors = []
     if len(inf.get("title", "")) > 30:
         errors.append(f"求人タイトル: {len(inf.get('title', ''))}文字（上限30文字）")
-    if len(inf.get("catch", "")) > 80:
-        errors.append(f"キャッチコピー: {len(inf.get('catch', ''))}文字（上限80文字）")
+    if len(inf.get("catch", "")) > 70:
+        errors.append(f"キャッチコピー: {len(inf.get('catch', ''))}文字（60文字以上70文字以内）")
     for key, label, limit, _ in INDEED_FIELDS:
         if limit and len(inf.get(key, "")) > limit:
             errors.append(f"{label}: {len(inf.get(key, ''))}文字（上限{limit}文字）")
@@ -214,7 +214,7 @@ def validate_indeed_fields(inf):
 def build_indeed_draft_text(inf):
     parts = [
         f"■求人タイトル（上限30文字/現在{len(inf.get('title', ''))}文字）\n{inf.get('title', '')}",
-        f"■キャッチコピー（上限80文字/現在{len(inf.get('catch', ''))}文字）\n{inf.get('catch', '')}",
+        f"■キャッチコピー（60文字以上70文字以内/現在{len(inf.get('catch', ''))}文字）\n{inf.get('catch', '')}",
     ]
     for key, label, limit, _ in INDEED_FIELDS:
         val = inf.get(key, "")
